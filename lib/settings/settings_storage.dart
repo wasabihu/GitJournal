@@ -286,10 +286,6 @@ Future<bool> _requestExternalStoragePermission(BuildContext context) async {
     "storage=$requestedStorageStatus, "
     "manageExternalStorage=$requestedManageStatus",
   );
-  showErrorMessageSnackbar(
-    context,
-    context.loc.settingsStoragePermissionFailed,
-  );
   return false;
 }
 
@@ -311,26 +307,28 @@ Future<String> _getExternalDir(BuildContext context) async {
     Log.e("FilePicker.getDirectoryPath failed", ex: e, stacktrace: st);
   }
 
-  if (!await _requestExternalStoragePermission(context)) {
-    return "";
-  }
+  final hasStoragePermission = await _requestExternalStoragePermission(context);
 
   final _androidXStoragePlugin = AndroidXStorage();
   String? path;
-  try {
-    path = await _androidXStoragePlugin.getExternalStorageDirectory();
-  } on PlatformException catch (e) {
-    Log.e("Error getting external storage directory", ex: e);
-  }
+  if (hasStoragePermission) {
+    try {
+      path = await _androidXStoragePlugin.getExternalStorageDirectory();
+    } on PlatformException catch (e) {
+      Log.e("Error getting external storage directory", ex: e);
+    }
 
-  if (path != null) {
-    if (await _isDirWritable(path)) {
-      return path;
-    } else {
-      Log.e("ExtStorage: Got $path but it is not writable");
+    if (path != null) {
+      if (await _isDirWritable(path)) {
+        return path;
+      } else {
+        Log.e("ExtStorage: Got $path but it is not writable");
+      }
     }
   }
 
+  // App-specific external directory usually remains writable even when
+  // broad external storage access is denied on newer Android versions.
   var extDir = await getExternalStorageDirectory();
   if (extDir != null) {
     path = extDir.path;
@@ -340,6 +338,13 @@ Future<String> _getExternalDir(BuildContext context) async {
     } else {
       Log.e("ExternalStorageDirectory: Got $path but it is not writable");
     }
+  }
+
+  if (!hasStoragePermission) {
+    showErrorMessageSnackbar(
+      context,
+      context.loc.settingsStoragePermissionFailed,
+    );
   }
 
   return "";

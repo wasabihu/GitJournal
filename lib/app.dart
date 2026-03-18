@@ -49,7 +49,17 @@ class JournalApp extends StatefulWidget {
     var appConfig = AppConfig.instance;
     Log.i("AppConfig", props: appConfig.toMap());
 
-    _enableAnalyticsIfPossible(appConfig, pref);
+    try {
+      await _enableAnalyticsIfPossible(appConfig, pref);
+    } catch (ex, st) {
+      Log.e("Failed to initialize analytics", ex: ex, stacktrace: st);
+      unawaited(
+        reportError(
+          Exception("Failed to initialize analytics: $ex"),
+          st,
+        ),
+      );
+    }
 
     final gitBaseDirectory = (await getApplicationDocumentsDirectory()).path;
     final cacheDir = (await getApplicationSupportDirectory()).path;
@@ -64,8 +74,17 @@ class JournalApp extends StatefulWidget {
       pref: pref,
     );
 
-    // Ignore the error, the router will show an error screen
-    await repoManager.buildActiveRepository();
+    // Ignore the error, the router will show an error screen.
+    await repoManager.buildActiveRepository().timeout(
+      const Duration(seconds: 25),
+      onTimeout: () {
+        var ex = TimeoutException(
+          "Loading the active repository timed out after 25 seconds",
+        );
+        repoManager.setCurrentRepoError(ex);
+        return null;
+      },
+    );
 
     GitJournalInAppPurchases.confirmProPurchaseBoot();
 
@@ -251,24 +270,28 @@ class JournalAppState extends State<JournalApp> {
 
   @override
   Widget build(BuildContext context) {
-    var repo = widget.repoManager.currentRepo;
+    var repoManager = context.watch<RepositoryManager>();
+    var repo = repoManager.currentRepo;
+    Settings? settings;
 
-    // Repository.load can be quite slow, especially because of the 'git commit'
-    // on booting
-    // FIXME: Make Settings not depend on Repository
-    late Settings settings;
-    try {
-      settings = context.watch<Settings>();
-    } catch (_) {
-      return const SizedBox();
+    if (repo != null) {
+      try {
+        settings = context.watch<Settings>();
+      } catch (ex, st) {
+        Log.e("Failed to load settings provider", ex: ex, stacktrace: st);
+        unawaited(
+          reportError(
+            Exception("Failed to load settings provider: $ex"),
+            st,
+          ),
+        );
+      }
     }
-
-    // FIXME: Settings can be null in this case!
 
     AppRouter? router;
     var themeMode = ThemeMode.system;
 
-    if (repo != null) {
+    if (repo != null && settings != null) {
       var appConfig = context.watch<AppConfig>();
       var storageConfig = context.watch<StorageConfig>();
 
@@ -307,8 +330,9 @@ class JournalAppState extends State<JournalApp> {
     );
     */
 
-    var locale = Locale(settings.locale);
-    var lSplit = settings.locale.split("_");
+    var localeName = settings?.locale ?? Platform.localeName;
+    var locale = Locale(localeName);
+    var lSplit = localeName.split("_");
     if (lSplit.length > 1) {
       locale = Locale(lSplit[0], lSplit[1]);
     }
@@ -322,8 +346,9 @@ class JournalAppState extends State<JournalApp> {
       supportedLocales: gitJournalSupportedLocales,
       locale: locale,
 
-      theme: Themes.fromName(settings.lightTheme),
-      darkTheme: Themes.fromName(settings.darkTheme),
+      theme: Themes.fromName(settings?.lightTheme ?? DEFAULT_LIGHT_THEME_NAME),
+      darkTheme:
+          Themes.fromName(settings?.darkTheme ?? DEFAULT_DARK_THEME_NAME),
       themeMode: themeMode,
       navigatorObservers: <NavigatorObserver>[
         AnalyticsRouteObserver(),
@@ -334,6 +359,13 @@ class JournalAppState extends State<JournalApp> {
       //debugShowMaterialGrid: true,
       onGenerateRoute: (rs) {
         if (router == null || repo == null) {
+          if (repoManager.isBuildingRepo &&
+              repoManager.currentRepoError == null) {
+            return MaterialPageRoute(
+              settings: rs,
+              builder: (context) => const _StartupLoadingScreen(),
+            );
+          }
           return MaterialPageRoute(
             settings: rs,
             builder: (context) => const ErrorScreen(),
@@ -347,6 +379,19 @@ class JournalAppState extends State<JournalApp> {
 
         return r;
       },
+    );
+  }
+}
+
+class _StartupLoadingScreen extends StatelessWidget {
+  const _StartupLoadingScreen();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Scaffold(
+      body: Center(
+        child: CircularProgressIndicator(),
+      ),
     );
   }
 }

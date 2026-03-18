@@ -22,6 +22,9 @@ import 'package:stack_trace/stack_trace.dart';
 void main() {
   Chain.capture(() async {
     await _main();
+  }, onError: (Object error, Chain chain) async {
+    await reportError(error, chain.toTrace());
+    runApp(_StartupFailureApp(error: error.toString()));
   });
 }
 
@@ -46,8 +49,40 @@ Future<void> _main() async {
   }).sendPort);
 
   if (Platform.isIOS || Platform.isAndroid) {
-    await FlutterDisplayMode.setHighRefreshRate();
+    try {
+      await FlutterDisplayMode.setHighRefreshRate().timeout(
+        const Duration(seconds: 3),
+      );
+    } catch (ex, st) {
+      debugPrint("Failed to set high refresh rate: $ex");
+      await reportError(Exception("Failed to set high refresh rate: $ex"), st);
+    }
   }
 
-  await JournalApp.main(pref);
+  await JournalApp.main(pref).timeout(const Duration(seconds: 45));
+}
+
+class _StartupFailureApp extends StatelessWidget {
+  final String error;
+
+  const _StartupFailureApp({required this.error});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      home: Scaffold(
+        body: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Center(
+              child: Text(
+                "GitJournal failed to start.\n\n$error",
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }

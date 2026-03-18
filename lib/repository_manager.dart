@@ -18,6 +18,7 @@ class RepositoryManager with ChangeNotifier {
 
   GitJournalRepo? _repo;
   Object? _repoError;
+  bool _isBuildingRepo = false;
 
   final String gitBaseDir;
   final String cacheDir;
@@ -35,6 +36,7 @@ class RepositoryManager with ChangeNotifier {
 
   GitJournalRepo? get currentRepo => _repo;
   Object? get currentRepoError => _repoError;
+  bool get isBuildingRepo => _isBuildingRepo;
 
   Future<GitJournalRepo?> buildActiveRepository({
     bool loadFromCache = true,
@@ -42,6 +44,7 @@ class RepositoryManager with ChangeNotifier {
   }) async {
     var repoCacheDir = p.join(cacheDir, currentId);
 
+    _isBuildingRepo = true;
     _repo = null;
     _repoError = null;
     notifyListeners();
@@ -59,12 +62,21 @@ class RepositoryManager with ChangeNotifier {
     } catch (ex, st) {
       Log.e("buildActiveRepo", ex: ex, stacktrace: st);
       _repoError = ex;
+      _isBuildingRepo = false;
       notifyListeners();
       return null;
     }
 
+    _isBuildingRepo = false;
     notifyListeners();
     return _repo!;
+  }
+
+  void setCurrentRepoError(Object error) {
+    _repo = null;
+    _repoError = error;
+    _isBuildingRepo = false;
+    notifyListeners();
   }
 
   String repoFolderName(String id) {
