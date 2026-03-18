@@ -24,6 +24,7 @@ if (!keystoreProperties.containsKey('keyAlias')) {
 android {
     namespace 'io.gitjournal.gitjournal'
     compileSdkVersion flutter.compileSdkVersion
+    ndkVersion "28.2.13676358"
 
     lintOptions {
         disable 'InvalidPackage'
@@ -68,7 +69,8 @@ android {
         }
         debug {
             ndk {
-                abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64'
+                // Local phone testing only needs the common 64-bit Android ABI.
+                abiFilters 'arm64-v8a'
             }
         }
     }

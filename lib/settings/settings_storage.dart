@@ -264,27 +264,55 @@ Future<bool> _isDirWritable(String path) async {
   return true;
 }
 
-Future<String> _getExternalDir(BuildContext context) async {
-  if (!await Permission.storage.request().isGranted) {
-    Log.e("Storage Permission Denied");
-    showErrorMessageSnackbar(
-      context,
-      context.loc.settingsStoragePermissionFailed,
-    );
-    return "";
+Future<bool> _requestExternalStoragePermission(BuildContext context) async {
+  final storageStatus = await Permission.storage.status;
+  final manageStorageStatus = await Permission.manageExternalStorage.status;
+  if (storageStatus.isGranted || manageStorageStatus.isGranted) {
+    return true;
   }
 
-  var dir = await FilePicker.platform.getDirectoryPath();
-  if (dir != null && dir.isNotEmpty) {
-    if (await _isDirWritable(dir)) {
-      return dir;
-    } else {
-      Log.e("FilePicker: Got $dir but it is not writable");
-      showErrorMessageSnackbar(
-        context,
-        context.loc.settingsStorageNotWritable(dir),
-      );
+  final requestedStorageStatus = await Permission.storage.request();
+  if (requestedStorageStatus.isGranted) {
+    return true;
+  }
+
+  final requestedManageStatus = await Permission.manageExternalStorage.request();
+  if (requestedManageStatus.isGranted) {
+    return true;
+  }
+
+  Log.e(
+    "Storage Permission Denied: "
+    "storage=$requestedStorageStatus, "
+    "manageExternalStorage=$requestedManageStatus",
+  );
+  showErrorMessageSnackbar(
+    context,
+    context.loc.settingsStoragePermissionFailed,
+  );
+  return false;
+}
+
+Future<String> _getExternalDir(BuildContext context) async {
+  try {
+    var dir = await FilePicker.platform.getDirectoryPath();
+    if (dir != null && dir.isNotEmpty) {
+      if (await _isDirWritable(dir)) {
+        return dir;
+      } else {
+        Log.e("FilePicker: Got $dir but it is not writable");
+        showErrorMessageSnackbar(
+          context,
+          context.loc.settingsStorageNotWritable(dir),
+        );
+      }
     }
+  } catch (e, st) {
+    Log.e("FilePicker.getDirectoryPath failed", ex: e, stacktrace: st);
+  }
+
+  if (!await _requestExternalStoragePermission(context)) {
+    return "";
   }
 
   final _androidXStoragePlugin = AndroidXStorage();
