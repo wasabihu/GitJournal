@@ -158,8 +158,14 @@ class GitNoteRepository {
         var bindings = GitBindingsAsync();
         await bindings.fetch(remoteName, gitRepoPath,
             utf8.encode(config.sshPrivateKey), config.sshPassword);
-      } catch (ex) {
-        rethrow;
+      } catch (ex, st) {
+        final mapped = mapMobileGitException(
+          operation: 'Git fetch',
+          error: ex,
+          usesEd25519Key: usesEd25519Key(config),
+        );
+        Log.e("GitFetch Failed", ex: ex, stacktrace: st);
+        throw mapped;
       }
     } else if (Platform.isMacOS || Platform.isLinux) {
       await gitFetchViaExecutable(
@@ -233,7 +239,11 @@ class GitNoteRepository {
         }
         */
         Log.e("GitPush Failed", ex: ex, stacktrace: stackTrace);
-        rethrow;
+        throw mapMobileGitException(
+          operation: 'Git push',
+          error: ex,
+          usesEd25519Key: usesEd25519Key(config),
+        );
       }
     } else if (Platform.isMacOS || Platform.isLinux) {
       return await gitPushViaExecutable(
@@ -283,4 +293,32 @@ bool shouldLogGitException(Exception ex) {
     }
   }
   return true;
+}
+
+bool usesEd25519Key(GitConfig config) {
+  if (config.sshPublicKey.trim().startsWith('ssh-ed25519 ')) {
+    return true;
+  }
+  return config.sshKeyType.name == 'Ed25519';
+}
+
+Exception mapMobileGitException({
+  required String operation,
+  required Object error,
+  required bool usesEd25519Key,
+}) {
+  final message = error.toString().toLowerCase();
+  if (message.contains('function not implemented') && usesEd25519Key) {
+    return Exception(
+      '$operation failed because the current mobile Git engine does not '
+      'support Ed25519 SSH keys on some devices. Switch this repository to '
+      'an RSA SSH key, update the remote service with the new public key, '
+      'and try syncing again.',
+    );
+  }
+
+  if (error is Exception) {
+    return error;
+  }
+  return Exception(error.toString());
 }
