@@ -55,6 +55,14 @@ test/.test_coverage.dart
 lib/.env.dart
 gj_common
 
+# Local secrets and release artifacts
+/secrets/
+/android/secrets/
+/releases/
+
+# Flutter iOS ephemeral build artifacts
+/ios/Flutter/ephemeral/
+
 # Android NDK Debug symbols
 debugSymbols
 .externalNativeBuild
