@@ -13,6 +13,8 @@ import 'package:gitjournal/iap/purchase_widget.dart';
 import 'package:gitjournal/iap/restore_purchase_button.dart';
 import 'package:gitjournal/l10n.dart';
 import 'package:gitjournal/logger/logger.dart';
+import 'package:gitjournal/settings/app_config.dart';
+import 'package:provider/provider.dart';
 import 'package:gitjournal/widgets/scroll_view_without_animation.dart';
 
 Set<String> _generateYearlySkus() {
@@ -67,6 +69,29 @@ class _PurchaseScreenState extends State<PurchaseScreen> {
   }
 
   Widget buildBody(BuildContext context) {
+    var appConfig = context.watch<AppConfig>();
+    if (appConfig.proMode) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.verified, size: 72),
+              const SizedBox(height: 12),
+              Text(
+                context.loc.purchaseScreenThanksSubtitle,
+                style: Theme.of(context).textTheme.headlineSmall,
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 16),
+              const RestorePurchaseButton(),
+            ],
+          ),
+        ),
+      );
+    }
+
     Widget w = Column(
       mainAxisAlignment: MainAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,

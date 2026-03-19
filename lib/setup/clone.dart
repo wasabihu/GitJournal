@@ -64,7 +64,10 @@ Future<void> cloneRemotePluggable({
   // this way we can avoid using dart-git unless absolutely necessary
   // since it's clearly buggy
   if (await _repoIsEmpty(repoPath)) {
-    Directory(repoPath).deleteSync(recursive: true);
+    var repoDir = Directory(repoPath);
+    if (repoDir.existsSync()) {
+      repoDir.deleteSync(recursive: true);
+    }
     return await gitCloneFn(
       cloneUrl: cloneUrl,
       repoPath: repoPath,
@@ -183,7 +186,12 @@ Future<void> cloneRemotePluggable({
 }
 
 Future<bool> _repoIsEmpty(repoPath) async {
-  var entities = Directory(repoPath).listSync();
+  var repoDir = Directory(repoPath);
+  if (!repoDir.existsSync()) {
+    return true;
+  }
+
+  var entities = repoDir.listSync();
   if (entities.length == 1) {
     if (p.basename(entities[0].path) == '.git') {
       return true;

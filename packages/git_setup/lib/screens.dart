@@ -33,6 +33,7 @@ import 'git_transfer_progress.dart';
 import 'keygen.dart';
 import 'loading_error.dart';
 import 'repo_selector.dart';
+import 'ssh_key_policy.dart';
 import 'sshkey.dart';
 
 class GitHostSetupScreen extends StatefulWidget {
@@ -559,9 +560,13 @@ class GitHostSetupScreenState extends State<GitHostSetupScreen> {
 
     var repo = context.read<GitJournalRepo>();
     var basePath = repo.gitBaseDirectory;
+    var storageConfig = context.read<StorageConfig>();
 
     var gitConfig = widget.providers.readGitConfig(context);
-    var repoPath = p.join(basePath, widget.repoFolderName);
+    var repoPath = await storageConfig.buildRepoPath(basePath);
+    if (repoPath.endsWith(p.separator)) {
+      repoPath = repoPath.substring(0, repoPath.length - 1);
+    }
     Log.i("RepoPath: $repoPath");
 
     try {
@@ -599,18 +604,17 @@ class GitHostSetupScreenState extends State<GitHostSetupScreen> {
       parameters: _buildOnboardingAnalytics(),
     );
 
-    var storageConfig = context.read<StorageConfig>();
     var folderName = folderNameFromCloneUrl(_gitCloneUrl);
     if (folderName != widget.repoFolderName) {
-      var newRepoPath = p.join(basePath, folderName);
+      var repoRootPath = p.dirname(repoPath);
+      var newRepoPath = p.join(repoRootPath, folderName);
       var i = 0;
       while (Directory(newRepoPath).existsSync()) {
         i++;
-        newRepoPath = p.join(basePath, folderName + "_$i");
+        newRepoPath = p.join(repoRootPath, folderName + "_$i");
       }
       folderName = p.basename(newRepoPath);
 
-      var repoPath = p.join(basePath, widget.repoFolderName);
       Log.i("Renaming $repoPath --> $newRepoPath");
       await Directory(repoPath).rename(newRepoPath);
       storageConfig.folderName = p.basename(newRepoPath);
@@ -629,7 +633,11 @@ class GitHostSetupScreenState extends State<GitHostSetupScreen> {
       setState(() {
         _autoConfigureMessage = context.loc.setupSshKeyGenerate;
       });
-      var keyType = widget.providers.readGitConfig(context).sshKeyType;
+      var gitConfig = widget.providers.readGitConfig(context);
+      var keyType = autoConfigureKeyType(
+        configuredType: gitConfig.sshKeyType,
+        isAndroid: Platform.isAndroid,
+      );
       var sshKey = await widget.keygen.generate(
         type: keyType,
         comment: "GitJournal",
@@ -638,7 +646,7 @@ class GitHostSetupScreenState extends State<GitHostSetupScreen> {
         // FIXME: Handle case when sshKey generation failed
         return;
       }
-      var gitConfig = widget.providers.readGitConfig(context);
+      gitConfig.sshKeyType = keyType;
       gitConfig.sshPublicKey = sshKey.publicKey;
       gitConfig.sshPrivateKey = sshKey.privateKey;
       gitConfig.sshPassword = sshKey.password;

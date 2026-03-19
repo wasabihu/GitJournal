@@ -62,7 +62,7 @@ class GitHub implements GitHost {
     var url = Uri.parse(
         "https://github.com/login/oauth/access_token?client_id=$_clientID&client_secret=$_clientSecret&code=$authCode");
 
-    var response = await http.post(url);
+    var response = await _postWithRetry(url);
     if (response.statusCode != 200) {
       Log.d("Github getAccessCode: Invalid response " +
           response.statusCode.toString() +
@@ -97,15 +97,19 @@ class GitHub implements GitHost {
 
     var url =
         Uri.parse("https://api.github.com/user/repos?page=1&per_page=100");
-    var headers = {
+    var headers = _headersWithDefaults({
       HttpHeaders.authorizationHeader: _buildAuthHeader(),
-    };
+    });
 
     if (foundation.kDebugMode) {
-      Log.d(toCurlCommand(url, headers));
+      var redactedHeaders = Map<String, String>.from(headers);
+      if (redactedHeaders.containsKey(HttpHeaders.authorizationHeader)) {
+        redactedHeaders[HttpHeaders.authorizationHeader] = 'token ***';
+      }
+      Log.d(toCurlCommand(url, redactedHeaders));
     }
 
-    var response = await http.get(url, headers: headers);
+    var response = await _getWithRetry(url, headers: headers);
     if (response.statusCode != 200) {
       Log.e("Github listRepos: Invalid response " +
           response.statusCode.toString() +
@@ -138,13 +142,16 @@ class GitHub implements GitHost {
       'private': true,
     };
 
-    var headers = {
+    var headers = _headersWithDefaults({
       HttpHeaders.contentTypeHeader: "application/json",
       HttpHeaders.authorizationHeader: _buildAuthHeader(),
-    };
+    });
 
-    var response =
-        await http.post(url, headers: headers, body: json.encode(data));
+    var response = await _postWithRetry(
+      url,
+      headers: headers,
+      body: json.encode(data),
+    );
     if (response.statusCode != 201) {
       Log.e("Github createRepo: Invalid response " +
           response.statusCode.toString() +
@@ -175,11 +182,11 @@ class GitHub implements GitHost {
     var owner = userInfo.username;
     var url = Uri.parse("https://api.github.com/repos/$owner/$name");
 
-    var headers = {
+    var headers = _headersWithDefaults({
       HttpHeaders.authorizationHeader: _buildAuthHeader(),
-    };
+    });
 
-    var response = await http.get(url, headers: headers);
+    var response = await _getWithRetry(url, headers: headers);
     if (response.statusCode != 200) {
       Log.e("Github getRepo: Invalid response " +
           response.statusCode.toString() +
@@ -208,13 +215,16 @@ class GitHub implements GitHost {
       'read_only': false,
     };
 
-    var headers = {
+    var headers = _headersWithDefaults({
       HttpHeaders.contentTypeHeader: "application/json",
       HttpHeaders.authorizationHeader: _buildAuthHeader(),
-    };
+    });
 
-    var response =
-        await http.post(url, headers: headers, body: json.encode(data));
+    var response = await _postWithRetry(
+      url,
+      headers: headers,
+      body: json.encode(data),
+    );
     if (response.statusCode != 201) {
       Log.d("Github addDeployKey: Invalid response " +
           response.statusCode.toString() +
@@ -276,11 +286,11 @@ class GitHub implements GitHost {
 
     var url = Uri.parse("https://api.github.com/user");
 
-    var headers = {
+    var headers = _headersWithDefaults({
       HttpHeaders.authorizationHeader: _buildAuthHeader(),
-    };
+    });
 
-    var response = await http.get(url, headers: headers);
+    var response = await _getWithRetry(url, headers: headers);
     if (response.statusCode != 200) {
       Log.d("Github getUserInfo: Invalid response " +
           response.statusCode.toString() +
@@ -337,5 +347,75 @@ class GitHub implements GitHost {
 
   String _buildAuthHeader() {
     return 'token $_accessCode';
+  }
+
+  Map<String, String> _headersWithDefaults(Map<String, String> headers) {
+    return {
+      ...headers,
+      HttpHeaders.connectionHeader: 'close',
+      HttpHeaders.userAgentHeader: 'GitJournal',
+    };
+  }
+
+  Future<http.Response> _getWithRetry(
+    Uri url, {
+    Map<String, String>? headers,
+  }) {
+    return _requestWithRetry(
+      () => http.get(url, headers: headers).timeout(const Duration(seconds: 20)),
+      'GET $url',
+    );
+  }
+
+  Future<http.Response> _postWithRetry(
+    Uri url, {
+    Map<String, String>? headers,
+    Object? body,
+  }) {
+    return _requestWithRetry(
+      () => http
+          .post(url, headers: headers, body: body)
+          .timeout(const Duration(seconds: 20)),
+      'POST $url',
+    );
+  }
+
+  Future<http.Response> _requestWithRetry(
+    Future<http.Response> Function() fn,
+    String requestName,
+  ) async {
+    const attempts = 3;
+    for (var i = 0; i < attempts; i++) {
+      try {
+        final response = await fn();
+        if (response.statusCode >= 500 && i < attempts - 1) {
+          await Future<void>.delayed(Duration(milliseconds: 400 * (i + 1)));
+          continue;
+        }
+        return response;
+      } catch (ex) {
+        final transient = _isTransientNetworkError(ex);
+        if (!transient || i == attempts - 1) rethrow;
+        Log.w(
+          '$requestName failed, retrying',
+          ex: ex,
+          props: {'attempt': '${i + 1}/$attempts'},
+        );
+        await Future<void>.delayed(Duration(milliseconds: 500 * (i + 1)));
+      }
+    }
+    throw Exception('$requestName failed unexpectedly');
+  }
+
+  bool _isTransientNetworkError(Object ex) {
+    if (ex is TimeoutException) {
+      return true;
+    }
+    final msg = ex.toString().toLowerCase();
+    return msg.contains('connection closed before full header was received') ||
+        msg.contains('connection reset') ||
+        msg.contains('connection aborted') ||
+        msg.contains('software caused connection abort') ||
+        msg.contains('timed out');
   }
 }
