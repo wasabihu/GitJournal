@@ -5,12 +5,10 @@
  */
 
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:gitjournal/logger/logger.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-const _forceProModeFromDartDefine =
-    bool.fromEnvironment('FORCE_PRO_MODE', defaultValue: false);
+const _unlockProByDefault = true;
 
 class AppConfig extends ChangeNotifier {
   // singleton
@@ -59,7 +57,7 @@ class AppConfig extends ChangeNotifier {
         pref.getBool("experimentalTagAutoCompletion") ??
             experimentalTagAutoCompletion;
 
-    if (_forceProModeFromDartDefine && !kReleaseMode) {
+    if (_unlockProByDefault) {
       proMode = true;
       validateProMode = false;
     }

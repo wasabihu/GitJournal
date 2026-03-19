@@ -15,6 +15,8 @@ import 'package:flutter_displaymode/flutter_displaymode.dart';
 import 'package:gitjournal/app.dart';
 import 'package:gitjournal/error_reporting.dart';
 import 'package:gitjournal/settings/app_config.dart';
+import 'package:gitjournal/startup/display_mode.dart';
+import 'package:gitjournal/startup/startup_trace.dart';
 import 'package:gitjournal/utils/bloc_observer.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:stack_trace/stack_trace.dart';
@@ -29,13 +31,18 @@ void main() {
 }
 
 Future<void> _main() async {
+  final startupTrace = StartupTrace('main');
+  startupTrace.mark('enter');
   BindingBase.debugZoneErrorsAreFatal = true;
   Bloc.observer = GlobalBlocObserver();
 
   WidgetsFlutterBinding.ensureInitialized();
+  startupTrace.mark('widgets binding initialized');
 
   var pref = await SharedPreferences.getInstance();
+  startupTrace.mark('shared preferences loaded');
   AppConfig.instance.load(pref);
+  startupTrace.mark('app config loaded');
 
   FlutterError.onError = flutterOnErrorHandler;
 
@@ -48,18 +55,18 @@ Future<void> _main() async {
     await reportError(isolateError.first, isolateError.last);
   }).sendPort);
 
-  if (Platform.isIOS || Platform.isAndroid) {
-    try {
-      await FlutterDisplayMode.setHighRefreshRate().timeout(
-        const Duration(seconds: 3),
-      );
-    } catch (ex, st) {
-      debugPrint("Failed to set high refresh rate: $ex");
-      await reportError(Exception("Failed to set high refresh rate: $ex"), st);
-    }
-  }
+  setHighRefreshRateInBackground(
+    isMobile: Platform.isIOS || Platform.isAndroid,
+    setHighRefreshRate: FlutterDisplayMode.setHighRefreshRate,
+    reportErrorFn: reportError,
+  );
+  startupTrace.mark('display mode task scheduled');
 
-  await JournalApp.main(pref).timeout(const Duration(seconds: 240));
+  await JournalApp.main(
+    pref,
+    startupTrace: startupTrace,
+  ).timeout(const Duration(seconds: 240));
+  startupTrace.finish('JournalApp.main completed');
 }
 
 class _StartupFailureApp extends StatelessWidget {

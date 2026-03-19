@@ -32,6 +32,7 @@ import 'package:gitjournal/settings/git_config.dart';
 import 'package:gitjournal/settings/settings.dart';
 import 'package:gitjournal/settings/settings_migrations.dart';
 import 'package:gitjournal/settings/storage_config.dart';
+import 'package:gitjournal/startup/startup_trace.dart';
 import 'package:gitjournal/sync_attempt.dart';
 import 'package:path/path.dart' as p;
 import 'package:sentry_flutter/sentry_flutter.dart';
@@ -41,6 +42,41 @@ import 'package:synchronized/synchronized.dart';
 import 'package:time/time.dart';
 import 'package:universal_io/io.dart' as io;
 import 'package:universal_io/io.dart' show Platform;
+
+@visibleForTesting
+Future<void> maybeCommitExternalChangesOnLoad({
+  required bool storeInternally,
+  required Future<void> Function() commitFn,
+  Duration timeout = const Duration(seconds: 2),
+}) async {
+  if (storeInternally) {
+    return;
+  }
+
+  try {
+    await commitFn().timeout(timeout);
+  } on TimeoutException catch (_) {
+    Log.w("commitUnTrackedChanges on load timed out; skipping");
+  } catch (ex, st) {
+    Log.e(
+      "commitUnTrackedChanges on load failed, skipping",
+      ex: ex,
+      stacktrace: st,
+    );
+  }
+}
+
+@visibleForTesting
+bool computeInitialFileStorageCacheReady({
+  required bool fastStartupMode,
+  required GitHash headHash,
+  required GitHash lastProcessedHead,
+}) {
+  if (fastStartupMode) {
+    return true;
+  }
+  return headHash == lastProcessedHead;
+}
 
 class GitJournalRepo with ChangeNotifier {
   final RepositoryManager repoManager;
@@ -104,8 +140,16 @@ class GitJournalRepo with ChangeNotifier {
     required RepositoryManager repoManager,
     bool loadFromCache = true,
     bool syncOnBoot = true,
+    bool checkExternalChangesOnLoad = true,
+    bool fastStartupMode = false,
   }) async {
+    final sw = Stopwatch()..start();
+    emitStartupTrace('+0ms: GitJournalRepo.load enter', name: 'repo_load');
     await migrateSettings(id, pref, gitBaseDir);
+    emitStartupTrace(
+      '+${sw.elapsedMilliseconds}ms: settings migrated',
+      name: 'repo_load',
+    );
 
     var storageConfig = StorageConfig(id, pref);
     storageConfig.load();
@@ -145,6 +189,10 @@ class GitJournalRepo with ChangeNotifier {
 
     var repoPath = await storageConfig.buildRepoPath(gitBaseDir);
     Log.i("Loading Repo at path $repoPath");
+    emitStartupTrace(
+      '+${sw.elapsedMilliseconds}ms: repo path resolved',
+      name: 'repo_load',
+    );
 
     var repoDir = io.Directory(repoPath);
 
@@ -153,6 +201,10 @@ class GitJournalRepo with ChangeNotifier {
       GitRepository.init(repoPath, defaultBranch: DEFAULT_BRANCH);
 
       storageConfig.save();
+      emitStartupTrace(
+        '+${sw.elapsedMilliseconds}ms: repo initialized',
+        name: 'repo_load',
+      );
     }
 
     var valid = GitRepository.isValidRepo(repoPath);
@@ -172,24 +224,31 @@ class GitJournalRepo with ChangeNotifier {
     }
 
     var repo = await GitAsyncRepository.load(repoPath);
+    emitStartupTrace(
+      '+${sw.elapsedMilliseconds}ms: git async repo loaded',
+      name: 'repo_load',
+    );
     var remoteConfigured = repo.config.remotes.isNotEmpty;
 
-    if (!storageConfig.storeInternally) {
-      try {
-        await _commitUnTrackedChanges(repo, gitConfig);
-      } catch (ex, st) {
-        Log.e(
-          "commitUnTrackedChanges on load failed, skipping",
-          ex: ex,
-          stacktrace: st,
-        );
-      }
+    if (checkExternalChangesOnLoad) {
+      await maybeCommitExternalChangesOnLoad(
+        storeInternally: storageConfig.storeInternally,
+        commitFn: () => _commitUnTrackedChanges(repo, gitConfig),
+      );
     }
+    emitStartupTrace(
+      '+${sw.elapsedMilliseconds}ms: external change check completed',
+      name: 'repo_load',
+    );
 
     await io.Directory(cacheDir).create(recursive: true);
 
     var fileStorageCache = FileStorageCache(cacheDir);
     var fileStorage = await fileStorageCache.load(repoPath);
+    emitStartupTrace(
+      '+${sw.elapsedMilliseconds}ms: file storage cache loaded',
+      name: 'repo_load',
+    );
 
     var head = GitHash.zero();
     try {
@@ -213,6 +272,11 @@ class GitJournalRepo with ChangeNotifier {
       headHash: head,
       loadFromCache: loadFromCache,
       syncOnBoot: syncOnBoot,
+      fastStartupMode: fastStartupMode,
+    );
+    emitStartupTrace(
+      '+${sw.elapsedMilliseconds}ms: GitJournalRepo.load done',
+      name: 'repo_load',
     );
 
     return gjRepo;
@@ -235,6 +299,7 @@ class GitJournalRepo with ChangeNotifier {
     required GitHash headHash,
     required bool loadFromCache,
     required bool syncOnBoot,
+    required bool fastStartupMode,
   }) {
     _gitRepo = GitNoteRepository(gitRepoPath: repoPath, config: gitConfig);
     rootFolder = NotesFolderFS.root(folderConfig, fileStorage);
@@ -256,24 +321,54 @@ class GitJournalRepo with ChangeNotifier {
       fileStorage: fileStorage,
     );
 
-    fileStorageCacheReady = headHash == fileStorageCache.lastProcessedHead;
+    fileStorageCacheReady = computeInitialFileStorageCacheReady(
+      fastStartupMode: fastStartupMode,
+      headHash: headHash,
+      lastProcessedHead: fileStorageCache.lastProcessedHead,
+    );
 
-    if (loadFromCache) _loadFromCache();
+    if (loadFromCache) {
+      if (fastStartupMode) {
+        unawaited(_loadCacheSnapshotThenWarmup());
+      } else {
+        _loadFromCache();
+      }
+    }
     if (syncOnBoot) _syncNotes();
   }
 
+  Future<void> _loadCacheSnapshotThenWarmup() async {
+    var startTime = DateTime.now();
+    await _notesCache.load(rootFolder);
+    var endTime = DateTime.now().difference(startTime);
+    Log.i("Loaded note snapshot from cache - $endTime");
+
+    notifyListeners();
+    unawaited(_loadNotes());
+  }
+
   Future<void> _loadFromCache() async {
+    final sw = Stopwatch()..start();
+    emitStartupTrace('+0ms: _loadFromCache enter', name: 'repo_warmup');
     var startTime = DateTime.now();
     await _notesCache.load(rootFolder);
     var endTime = DateTime.now().difference(startTime);
 
     Log.i("Finished loading the notes cache - $endTime");
+    emitStartupTrace(
+      '+${sw.elapsedMilliseconds}ms: notes cache loaded',
+      name: 'repo_warmup',
+    );
 
     startTime = DateTime.now();
     await _loadNotes();
     endTime = DateTime.now().difference(startTime);
 
     Log.i("Finished loading all the notes - $endTime");
+    emitStartupTrace(
+      '+${sw.elapsedMilliseconds}ms: notes loaded',
+      name: 'repo_warmup',
+    );
   }
 
   Future<void> _resetFileStorage() async {

@@ -44,6 +44,41 @@ typedef GitDefaultBranchFunction = Future<String> Function(
   String sshPassword,
 );
 
+typedef AsyncAction = Future<void> Function();
+
+Future<bool> tryCloneWithRetries({
+  required AsyncAction cloneOnce,
+  required AsyncAction cleanupRepoDir,
+  Duration retryDelay = const Duration(milliseconds: 150),
+  int maxAttempts = 2,
+}) async {
+  assert(maxAttempts > 0);
+
+  for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      await cloneOnce();
+      return true;
+    } catch (ex, st) {
+      final isRetryable = _isRetryableCloneFailure(ex);
+      final canRetry = attempt < maxAttempts && isRetryable;
+      if (!isRetryable) {
+        Log.e("Clone failed and cannot retry", ex: ex, stacktrace: st);
+        rethrow;
+      }
+      if (!canRetry) {
+        Log.e("Clone failed after retries", ex: ex, stacktrace: st);
+        return false;
+      }
+
+      Log.w("Clone attempt $attempt failed; cleaning and retrying", ex: ex);
+      await cleanupRepoDir();
+      await Future<void>.delayed(retryDelay);
+    }
+  }
+
+  return false;
+}
+
 Future<void> cloneRemotePluggable({
   required String repoPath,
   required String cloneUrl,
@@ -64,18 +99,35 @@ Future<void> cloneRemotePluggable({
   // this way we can avoid using dart-git unless absolutely necessary
   // since it's clearly buggy
   if (await _repoIsEmpty(repoPath)) {
-    var repoDir = Directory(repoPath);
-    if (repoDir.existsSync()) {
-      repoDir.deleteSync(recursive: true);
+    Future<void> cleanupRepoDir() async {
+      var repoDir = Directory(repoPath);
+      if (repoDir.existsSync()) {
+        repoDir.deleteSync(recursive: true);
+      }
     }
-    return await gitCloneFn(
-      cloneUrl: cloneUrl,
-      repoPath: repoPath,
-      sshPublicKey: sshPublicKey,
-      sshPrivateKey: sshPrivateKey,
-      sshPassword: sshPassword,
-      statusFile: statusFile,
+
+    await cleanupRepoDir();
+    final cloned = await tryCloneWithRetries(
+      cloneOnce: () {
+        return gitCloneFn(
+          cloneUrl: cloneUrl,
+          repoPath: repoPath,
+          sshPublicKey: sshPublicKey,
+          sshPrivateKey: sshPrivateKey,
+          sshPassword: sshPassword,
+          statusFile: statusFile,
+        );
+      },
+      cleanupRepoDir: cleanupRepoDir,
     );
+
+    if (cloned) {
+      return;
+    }
+
+    Log.w("Falling back to init+fetch after clone failure");
+    Directory(repoPath).createSync(recursive: true);
+    GitRepository.init(repoPath, defaultBranch: DefaultBranchName);
   }
 
   var repo = await GitAsyncRepository.load(repoPath);
@@ -183,6 +235,21 @@ Future<void> cloneRemotePluggable({
   if (!skipCheckout) {
     await repo.checkout(".");
   }
+}
+
+bool _isTmpPackRenameFailure(Object ex) {
+  final message = ex.toString();
+  return message.contains('rename ') &&
+      message.contains('tmp_pack_') &&
+      message.contains('.git/objects/pack/') &&
+      message.contains('.pack');
+}
+
+bool _isRetryableCloneFailure(Object ex) {
+  final message = ex.toString();
+  return _isTmpPackRenameFailure(ex) ||
+      message.contains('Connection closed before full header was received') ||
+      message.contains('connection closed before full header was received');
 }
 
 Future<bool> _repoIsEmpty(repoPath) async {

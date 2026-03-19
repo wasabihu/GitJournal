@@ -18,11 +18,16 @@ import 'package:gitjournal/error_reporting.dart';
 import 'package:gitjournal/iap/iap.dart';
 import 'package:gitjournal/l10n.dart';
 import 'package:gitjournal/logger/logger.dart';
+import 'package:gitjournal/repository.dart';
 import 'package:gitjournal/repository_manager.dart';
 import 'package:gitjournal/screens/error_screen.dart';
 import 'package:gitjournal/settings/app_config.dart';
 import 'package:gitjournal/settings/settings.dart';
 import 'package:gitjournal/settings/storage_config.dart';
+import 'package:gitjournal/startup/deferred_startup.dart';
+import 'package:gitjournal/startup/repo_fast_start.dart';
+import 'package:gitjournal/startup/startup_shell.dart';
+import 'package:gitjournal/startup/startup_trace.dart';
 import 'package:gitjournal/themes.dart';
 import 'package:hive/hive.dart';
 import 'package:path/path.dart' as p;
@@ -35,58 +40,29 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:universal_io/io.dart' show Directory, Platform;
 
 class JournalApp extends StatefulWidget {
-  static Future<void> main(SharedPreferences pref) async {
-    await Log.init();
-
-    Log.i("--------------------------------");
-    Log.i("--------------------------------");
-    Log.i("--------------------------------");
-    Log.i("--------- App Launched ---------");
-    Log.i("--------------------------------");
-    Log.i("--------------------------------");
-    Log.i("--------------------------------");
-
+  static Future<void> main(
+    SharedPreferences pref, {
+    StartupTrace? startupTrace,
+  }) async {
+    startupTrace?.mark('JournalApp.main enter');
     var appConfig = AppConfig.instance;
-    Log.i("AppConfig", props: appConfig.toMap());
-
-    try {
-      await _enableAnalyticsIfPossible(appConfig, pref);
-    } catch (ex, st) {
-      Log.e("Failed to initialize analytics", ex: ex, stacktrace: st);
-      unawaited(
-        reportError(
-          Exception("Failed to initialize analytics: $ex"),
-          st,
-        ),
-      );
-    }
 
     final gitBaseDirectory = (await getApplicationDocumentsDirectory()).path;
+    startupTrace?.mark('application documents directory ready');
     final cacheDir = (await getApplicationSupportDirectory()).path;
+    startupTrace?.mark('application support directory ready');
 
     Hive.init(cacheDir);
     Hive.registerAdapter(LinkAdapter());
     Hive.registerAdapter(LinksListAdapter());
+    startupTrace?.mark('hive initialized');
 
     var repoManager = RepositoryManager(
       gitBaseDir: gitBaseDirectory,
       cacheDir: cacheDir,
       pref: pref,
     );
-
-    // Ignore the error, the router will show an error screen.
-    await repoManager.buildActiveRepository().timeout(
-      const Duration(seconds: 180),
-      onTimeout: () {
-        var ex = TimeoutException(
-          "Loading the active repository timed out after 180 seconds",
-        );
-        repoManager.setCurrentRepoError(ex);
-        return null;
-      },
-    );
-
-    GitJournalInAppPurchases.confirmProPurchaseBoot();
+    startupTrace?.mark('repository manager created');
 
     runApp(
       GitJournalChangeNotifiers(
@@ -96,6 +72,59 @@ class JournalApp extends StatefulWidget {
         child: JournalApp(repoManager: repoManager),
       ),
     );
+    startupTrace?.mark('runApp dispatched');
+
+    unawaited(
+      runRepoFastStartFlow<GitJournalRepo>(
+        buildFastRepo: () {
+          startupTrace?.mark('fast repo build scheduled');
+          return repoManager.buildActiveRepositoryInBackground(
+            loadFromCache: true,
+            syncOnBoot: false,
+            checkExternalChangesOnLoad: false,
+            fastStartupMode: true,
+          );
+        },
+        currentRepo: () => repoManager.currentRepo,
+        reloadNotes: (repo) async {
+          startupTrace?.mark('warmup reloadNotes started');
+          await repo.reloadNotes();
+          startupTrace?.mark('warmup reloadNotes completed');
+        },
+        syncNotes: (repo) async {
+          startupTrace?.mark('warmup syncNotes started');
+          await repo.syncNotes(doNotThrow: true);
+          startupTrace?.mark('warmup syncNotes completed');
+        },
+        onError: (stage, error, st) async {
+          Log.e("fast start $stage failed", ex: error, stacktrace: st);
+          await reportError(
+            Exception("fast start $stage failed: $error"),
+            st,
+          );
+        },
+      ),
+    );
+    startupTrace?.mark('fast-start flow dispatched');
+    unawaited(
+      runDeferredStartupTasks(
+        initLog: () async {
+          await Log.init();
+          Log.i("--------------------------------");
+          Log.i("--------------------------------");
+          Log.i("--------------------------------");
+          Log.i("--------- App Launched ---------");
+          Log.i("--------------------------------");
+          Log.i("--------------------------------");
+          Log.i("--------------------------------");
+          Log.i("AppConfig", props: appConfig.toMap());
+        },
+        initAnalytics: () => _enableAnalyticsIfPossible(appConfig, pref),
+        confirmPurchase: GitJournalInAppPurchases.confirmProPurchaseBoot,
+        reportErrorFn: reportError,
+      ),
+    );
+    startupTrace?.finish('deferred startup tasks scheduled');
   }
 
   // TODO: All this logic should go inside the analytics package
@@ -388,10 +417,8 @@ class _StartupLoadingScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Scaffold(
-      body: Center(
-        child: CircularProgressIndicator(),
-      ),
+    return const AppStartupShell(
+      message: 'Preparing your notes repository...',
     );
   }
 }

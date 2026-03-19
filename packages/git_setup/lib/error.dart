@@ -14,29 +14,31 @@ class GitHostSetupErrorPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    var children = <Widget>[
-      Padding(
-        padding: const EdgeInsets.all(8.0),
-        child: Text(
-          context.loc.setupFail,
-          textAlign: TextAlign.center,
-          style: Theme.of(context).textTheme.headlineMedium,
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(8),
+              child: Text(
+                context.loc.setupFail,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.headlineMedium,
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(8),
+              child: SelectableText(
+                errorMessage,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodyLarge,
+              ),
+            ),
+          ],
         ),
       ),
-      Padding(
-        padding: const EdgeInsets.all(8.0),
-        child: Text(
-          errorMessage,
-          textAlign: TextAlign.center,
-          style: Theme.of(context).textTheme.headlineMedium,
-        ),
-      ),
-    ];
-
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: children,
     );
   }
 }

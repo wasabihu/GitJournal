@@ -4,11 +4,14 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:gitjournal/logger/logger.dart';
 import 'package:gitjournal/repository.dart';
 import 'package:gitjournal/settings/settings.dart';
 import 'package:gitjournal/settings/storage_config.dart';
+import 'package:gitjournal/startup/startup_trace.dart';
 import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -41,7 +44,10 @@ class RepositoryManager with ChangeNotifier {
   Future<GitJournalRepo?> buildActiveRepository({
     bool loadFromCache = true,
     bool syncOnBoot = true,
+    bool checkExternalChangesOnLoad = true,
+    bool fastStartupMode = false,
   }) async {
+    final sw = Stopwatch()..start();
     var repoCacheDir = p.join(cacheDir, currentId);
 
     _isBuildingRepo = true;
@@ -58,9 +64,15 @@ class RepositoryManager with ChangeNotifier {
         id: currentId,
         loadFromCache: loadFromCache,
         syncOnBoot: syncOnBoot,
+        checkExternalChangesOnLoad: checkExternalChangesOnLoad,
+        fastStartupMode: fastStartupMode,
       );
     } catch (ex, st) {
       Log.e("buildActiveRepo", ex: ex, stacktrace: st);
+      emitStartupTrace(
+        "+${sw.elapsedMilliseconds}ms: failed for repoId=$currentId",
+        name: 'repo_build',
+      );
       _repoError = ex;
       _isBuildingRepo = false;
       notifyListeners();
@@ -69,7 +81,60 @@ class RepositoryManager with ChangeNotifier {
 
     _isBuildingRepo = false;
     notifyListeners();
+    emitStartupTrace(
+      "+${sw.elapsedMilliseconds}ms: completed for repoId=$currentId",
+      name: 'repo_build',
+    );
     return _repo!;
+  }
+
+  Future<void> buildActiveRepositoryInBackground({
+    bool loadFromCache = true,
+    bool syncOnBoot = true,
+    bool checkExternalChangesOnLoad = true,
+    bool fastStartupMode = false,
+    Duration timeout = const Duration(seconds: 180),
+  }) {
+    return _buildActiveRepositorySafely(
+      loadFromCache: loadFromCache,
+      syncOnBoot: syncOnBoot,
+      checkExternalChangesOnLoad: checkExternalChangesOnLoad,
+      fastStartupMode: fastStartupMode,
+      timeout: timeout,
+    );
+  }
+
+  Future<void> _buildActiveRepositorySafely({
+    required bool loadFromCache,
+    required bool syncOnBoot,
+    required bool checkExternalChangesOnLoad,
+    required bool fastStartupMode,
+    required Duration timeout,
+  }) async {
+    try {
+      await buildActiveRepository(
+        loadFromCache: loadFromCache,
+        syncOnBoot: syncOnBoot,
+        checkExternalChangesOnLoad: checkExternalChangesOnLoad,
+        fastStartupMode: fastStartupMode,
+      ).timeout(
+        timeout,
+        onTimeout: () {
+          final ex = TimeoutException(
+            "Loading the active repository timed out after ${timeout.inSeconds} seconds",
+          );
+          setCurrentRepoError(ex);
+          return null;
+        },
+      );
+    } catch (ex, st) {
+      Log.e(
+        "buildActiveRepositoryInBackground",
+        ex: ex,
+        stacktrace: st,
+      );
+      setCurrentRepoError(ex);
+    }
   }
 
   void setCurrentRepoError(Object error) {
