@@ -157,18 +157,33 @@ class GitJournalRepo with ChangeNotifier {
 
     var valid = GitRepository.isValidRepo(repoPath);
     if (!valid) {
-      // What happened that the directory still exists but the .git folder
-      // has disappeared?
-      // FIXME: What if the '.config' file is not accessible?
-      // -> https://sentry.io/share/issue/bafc5c417bdb4fd196cead1d28432f12/
-      throw Exception('Folder is no longer a valid Git Repo');
+      final repaired = await _repairInvalidRepo(
+        repoPath: repoPath,
+        gitConfig: gitConfig,
+      );
+      valid = repaired && GitRepository.isValidRepo(repoPath);
+      if (!valid) {
+        // What happened that the directory still exists but the .git folder
+        // has disappeared?
+        // FIXME: What if the '.config' file is not accessible?
+        // -> https://sentry.io/share/issue/bafc5c417bdb4fd196cead1d28432f12/
+        throw Exception('Folder is no longer a valid Git Repo');
+      }
     }
 
     var repo = await GitAsyncRepository.load(repoPath);
     var remoteConfigured = repo.config.remotes.isNotEmpty;
 
     if (!storageConfig.storeInternally) {
-      await _commitUnTrackedChanges(repo, gitConfig);
+      try {
+        await _commitUnTrackedChanges(repo, gitConfig);
+      } catch (ex, st) {
+        Log.e(
+          "commitUnTrackedChanges on load failed, skipping",
+          ex: ex,
+          stacktrace: st,
+        );
+      }
     }
 
     await io.Directory(cacheDir).create(recursive: true);
@@ -683,6 +698,12 @@ class GitJournalRepo with ChangeNotifier {
 
       await io.Directory(newRepoPath).create(recursive: true);
       await _copyDirectory(repoPath, newRepoPath);
+
+      if (!GitRepository.isValidRepo(newRepoPath)) {
+        throw Exception(
+          "Move repository failed: destination is not a valid git repo",
+        );
+      }
       await io.Directory(repoPath).delete(recursive: true);
 
       repoManager.buildActiveRepository();
@@ -880,6 +901,42 @@ Future<void> _copyDirectory(String source, String destination) async {
     } else if (entity is io.File) {
       await entity.copy(p.join(destination, p.basename(entity.path)));
     }
+  }
+}
+
+Future<bool> _repairInvalidRepo({
+  required String repoPath,
+  required GitConfig gitConfig,
+}) async {
+  final repoDir = io.Directory(repoPath);
+  if (!repoDir.existsSync()) {
+    return false;
+  }
+
+  final gitDirPath = p.join(repoPath, '.git');
+  final gitDir = io.Directory(gitDirPath);
+  if (gitDir.existsSync()) {
+    final backupPath = p.join(
+      repoPath,
+      '.git.invalid_${DateTime.now().millisecondsSinceEpoch}',
+    );
+    try {
+      await gitDir.rename(backupPath);
+      Log.e("Invalid .git directory moved to $backupPath");
+    } catch (ex, st) {
+      Log.e("Failed to backup invalid .git", ex: ex, stacktrace: st);
+      return false;
+    }
+  }
+
+  try {
+    Log.e("Repairing invalid git repo by re-initializing: $repoPath");
+    GitRepository.init(repoPath, defaultBranch: DEFAULT_BRANCH);
+    await _ensureOneCommitInRepo(repoPath: repoPath, config: gitConfig);
+    return true;
+  } catch (ex, st) {
+    Log.e("Failed to repair invalid git repo", ex: ex, stacktrace: st);
+    return false;
   }
 }
 
