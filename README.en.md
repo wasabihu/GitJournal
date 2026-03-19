@@ -1,6 +1,6 @@
 <p align="center">
   <img width="400" height="auto" src="https://gitjournal.io/images/logo.png">
-  <br/>以移动优先方式打造的 Git 集成 Markdown 笔记应用
+  <br/>Mobile first Markdown Notes integrated with Git</b>
 </p>
 
 <p align="center">
@@ -17,29 +17,15 @@
   </br>
 </p>
 
-# GitJournal 中文说明
+# GitJournal English README
 
-当前主文档为中文版本，英文版请查看 [README.en.md](./README.en.md)。
+This file is kept as the alternative English version. For the primary Chinese README, see [README.md](./README.md).
 
-## 修改记录
+# Summary
 
-- 2026-03-19：将仓库根目录 `README.md` 调整为中文主文档。
-- 2026-03-19：保留原英文内容并迁移到 `README.en.md` 作为备选语言版本。
-- 2026-03-19：补充中英文文档互链，便于不同语言读者切换。
+GitJournal is a note taking app focused on privacy and data portability. It stores all its notes in a standardized Markdown + YAML header format (optional). The notes are stored in a Git Repo of your choice - GitHub / Gitlab / Custom-provider. This means you can easily self host or host your notes in one of the many [Git providers](./docs/git_hosts.md).
 
-## 项目简介
-
-GitJournal 是一款注重隐私与数据可迁移性的笔记应用。它使用标准化的 Markdown 格式保存笔记，并可选使用 YAML 头信息存储元数据。所有笔记都保存在你选择的 Git 仓库中，例如 GitHub、GitLab 或自定义 Git 服务。
-
-这种设计意味着：
-
-- 你的数据始终由你自己掌控。
-- 笔记格式开放，便于迁移和长期保存。
-- 你可以自托管，也可以使用任意兼容的 Git 提供商。
-
-支持的 Git 托管方式可参考 [docs/git_hosts.md](./docs/git_hosts.md)。
-
-## 截图
+# Screenshots
 
 <p float="left">
 <img src="https://gitjournal.io/screenshots/android/2020-06-04/en-GB/images/phoneScreenshots/Nexus 6P-1.png" width="240" height="auto">
@@ -56,23 +42,19 @@ GitJournal 是一款注重隐私与数据可迁移性的笔记应用。它使用
 <img src="https://gitjournal.io/screenshots/android/2020-06-04/en-GB/images/phoneScreenshots/Nexus 6P-20.png" width="240" height="auto">
 </p>
 
-## 从其他应用迁移
+# Migrating from Existing Apps
 
 - [Google Keep](https://github.com/vHanda/google-keep-exporter)
 - [Day One Classic](https://gist.github.com/sanzoghenzo/fb5011aa566292a4eb1b62fc7a4a50cc)
 - [Narrate](https://gist.github.com/sanzoghenzo/fb5011aa566292a4eb1b62fc7a4a50cc)
 - [Simplenote](https://github.com/isae/gitjournal-simplenote-exporter)
 
-## 开发与构建
+# Contributing
 
-本仓库本地开发主要面向 Android，构建说明请查看 [BUILD.md](./BUILD.md)。
+Please feel free to [open an issue](https://github.com/GitJournal/GitJournal/issues/new) for any bug or feature request. Additionally, you can vote on existing [Issues](https://github.com/GitJournal/GitJournal/issues?q=is%3Aissue+is%3Aopen+sort%3Areactions-%2B1-desc) by reacting with a thumbs up.
 
-## 参与贡献
+# License
 
-欢迎通过 [GitHub Issues](https://github.com/GitJournal/GitJournal/issues/new) 提交 Bug 或功能建议。你也可以在现有 [Issues 列表](https://github.com/GitJournal/GitJournal/issues?q=is%3Aissue+is%3Aopen+sort%3Areactions-%2B1-desc) 中使用 reaction 为关注的问题投票。
+All code contributed by [Vishesh Handa](https://github.com/vhanda) is licensed under the [AGPL](https://www.gnu.org/licenses/agpl-3.0.en.html). All code contributed by anyone else is licensed under the Apache License 2.0. This is done so that GitJournal can avoid needing a CLA, and it can be distributed it on the Apple App Store which doesn't allow AGPL.
 
-## 许可证
-
-[Vishesh Handa](https://github.com/vhanda) 贡献的代码使用 [AGPL](https://www.gnu.org/licenses/agpl-3.0.en.html) 许可，其他贡献者的代码使用 Apache License 2.0。这样做可以避免 GitJournal 依赖 CLA，同时仍可在不允许 AGPL 的 Apple App Store 分发。
-
-文档（包括本文件）和翻译内容使用 <a rel="license" href="http://creativecommons.org/licenses/by/4.0/">Creative Commons Attribution 4.0 International License</a>。
+The documentation (including this file) and translations are under a <a rel="license" href="http://creativecommons.org/licenses/by/4.0/">Creative Commons Attribution 4.0 International License</a>.
