@@ -27,32 +27,85 @@ class FolderViewConfigurationDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    return _FolderViewConfigurationDialogBody(
+      headerType: headerType,
+      showSummary: showSummary,
+      onHeaderTypeChanged: onHeaderTypeChanged,
+      onShowSummaryChanged: onShowSummaryChanged,
+    );
+  }
+}
+
+class _FolderViewConfigurationDialogBody extends StatefulWidget {
+  final StandardViewHeader headerType;
+  final bool showSummary;
+
+  final void Function(StandardViewHeader?) onHeaderTypeChanged;
+  final void Function(bool) onShowSummaryChanged;
+
+  const _FolderViewConfigurationDialogBody({
+    required this.headerType,
+    required this.showSummary,
+    required this.onHeaderTypeChanged,
+    required this.onShowSummaryChanged,
+  });
+
+  @override
+  State<_FolderViewConfigurationDialogBody> createState() =>
+      _FolderViewConfigurationDialogBodyState();
+}
+
+class _FolderViewConfigurationDialogBodyState
+    extends State<_FolderViewConfigurationDialogBody> {
+  late StandardViewHeader _headerType;
+  late bool _showSummary;
+
+  @override
+  void initState() {
+    super.initState();
+    _headerType = widget.headerType;
+    _showSummary = widget.showSummary;
+  }
+
+  @override
+  void didUpdateWidget(covariant _FolderViewConfigurationDialogBody oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.headerType != widget.headerType) {
+      _headerType = widget.headerType;
+    }
+    if (oldWidget.showSummary != widget.showSummary) {
+      _showSummary = widget.showSummary;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     var children = <Widget>[
       SettingsHeader(context.loc.widgetsFolderViewHeaderOptionsHeading),
       RadioListTile<StandardViewHeader>(
         title: Text(context.loc.widgetsFolderViewHeaderOptionsTitleFileName),
         value: StandardViewHeader.TitleOrFileName,
-        groupValue: headerType,
-        onChanged: onHeaderTypeChanged,
+        groupValue: _headerType,
+        onChanged: _headerTypeChanged,
       ),
       RadioListTile<StandardViewHeader>(
         title: Text(context.loc.widgetsFolderViewHeaderOptionsAuto),
         value: StandardViewHeader.TitleGenerated,
-        groupValue: headerType,
-        onChanged: onHeaderTypeChanged,
+        groupValue: _headerType,
+        onChanged: _headerTypeChanged,
       ),
       RadioListTile<StandardViewHeader>(
         key: const ValueKey("ShowFileNameOnly"),
         title: Text(context.loc.widgetsFolderViewHeaderOptionsFileName),
         value: StandardViewHeader.FileName,
-        groupValue: headerType,
-        onChanged: onHeaderTypeChanged,
+        groupValue: _headerType,
+        onChanged: _headerTypeChanged,
       ),
       SwitchListTile(
         key: const ValueKey("SummaryToggle"),
         title: Text(context.loc.widgetsFolderViewHeaderOptionsSummary),
-        value: showSummary,
-        onChanged: onShowSummaryChanged,
+        value: _showSummary,
+        onChanged: _showSummaryChanged,
       ),
     ];
 
@@ -75,5 +128,22 @@ class FolderViewConfigurationDialog extends StatelessWidget {
         children: children,
       ),
     );
+  }
+
+  void _headerTypeChanged(StandardViewHeader? newHeader) {
+    if (newHeader == null) {
+      return;
+    }
+    setState(() {
+      _headerType = newHeader;
+    });
+    widget.onHeaderTypeChanged(newHeader);
+  }
+
+  void _showSummaryChanged(bool newVal) {
+    setState(() {
+      _showSummary = newVal;
+    });
+    widget.onShowSummaryChanged(newVal);
   }
 }
