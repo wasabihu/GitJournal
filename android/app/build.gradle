@@ -21,6 +21,9 @@ if (!keystoreProperties.containsKey('keyAlias')) {
     keystoreProperties['storePassword'] = 'local'
 }
 
+def splitPerAbiEnabled = project.hasProperty('split-per-abi') &&
+    project.property('split-per-abi') == 'true'
+
 android {
     namespace 'io.gitjournal.gitjournal'
     compileSdkVersion flutter.compileSdkVersion
@@ -63,14 +66,18 @@ android {
     buildTypes {
         release {
             signingConfig signingConfigs.release
-            ndk {
-                abiFilters 'arm64-v8a', 'armeabi-v7a'
+            if (!splitPerAbiEnabled) {
+                ndk {
+                    abiFilters 'arm64-v8a', 'armeabi-v7a'
+                }
             }
         }
         debug {
-            ndk {
-                // Local phone testing only needs the common 64-bit Android ABI.
-                abiFilters 'arm64-v8a'
+            if (!splitPerAbiEnabled) {
+                ndk {
+                    // Local phone testing only needs the common 64-bit Android ABI.
+                    abiFilters 'arm64-v8a'
+                }
             }
         }
     }

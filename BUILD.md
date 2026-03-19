@@ -9,7 +9,13 @@
 1. Use [AVD manager](https://developer.android.com/studio/run/managing-avds) from Android Studio, to create device for local development.
 1. Run command `flutter run --flavor dev --debug`: it will connect to available device and run program.
 
-   1. Or you can run `flutter build apk --flavor dev --debug` and see apk under `build/app/outputs/apk/` folder
+   1. Or you can run `flutter build apk --flavor dev --debug` and see apk under `build/app/outputs/flutter-apk/`
+
+1. For production APKs:
+
+   1. Universal release APK: `flutter build apk --flavor prod --release`
+   1. Smaller per-device release APKs: `flutter build apk --flavor prod --release --split-per-abi`
+   1. The generated split APKs are written to `build/app/outputs/flutter-apk/` as `app-arm64-v8a-prod-release.apk`, `app-armeabi-v7a-prod-release.apk`, and `app-x86_64-prod-release.apk`
 
 1. You will see application on emulator, you are all setup. You can start with [app.dart](lib/app.dart) file to exploring code.
 
