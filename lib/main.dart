@@ -59,7 +59,7 @@ Future<void> _main() async {
     }
   }
 
-  await JournalApp.main(pref).timeout(const Duration(seconds: 45));
+  await JournalApp.main(pref).timeout(const Duration(seconds: 240));
 }
 
 class _StartupFailureApp extends StatelessWidget {

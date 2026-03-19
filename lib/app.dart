@@ -76,10 +76,10 @@ class JournalApp extends StatefulWidget {
 
     // Ignore the error, the router will show an error screen.
     await repoManager.buildActiveRepository().timeout(
-      const Duration(seconds: 25),
+      const Duration(seconds: 180),
       onTimeout: () {
         var ex = TimeoutException(
-          "Loading the active repository timed out after 25 seconds",
+          "Loading the active repository timed out after 180 seconds",
         );
         repoManager.setCurrentRepoError(ex);
         return null;
