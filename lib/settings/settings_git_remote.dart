@@ -198,10 +198,7 @@ class _GitRemoteSettingsScreenState extends State<GitRemoteSettingsScreen> {
         .generate(type: keyType, comment: comment)
         .then((SshKey? sshKey) {
       var config = context.read<GitConfig>();
-      config.sshPublicKey = sshKey!.publicKey;
-      config.sshPrivateKey = sshKey.publicKey;
-      config.sshPassword = sshKey.password;
-      config.save();
+      applyGeneratedSshKeyToConfig(config: config, sshKey: sshKey!);
 
       Log.d("PublicKey: ${sshKey.publicKey}");
       _copyKeyToClipboard(context);
@@ -277,6 +274,16 @@ class _GitRemoteSettingsScreenState extends State<GitRemoteSettingsScreen> {
 
     Navigator.of(context).popUntil((route) => route.isFirst);
   }
+}
+
+Future<void> applyGeneratedSshKeyToConfig({
+  required GitConfig config,
+  required SshKey sshKey,
+}) async {
+  config.sshPublicKey = sshKey.publicKey;
+  config.sshPrivateKey = sshKey.privateKey;
+  config.sshPassword = sshKey.password;
+  await config.save();
 }
 
 class Button extends StatelessWidget {

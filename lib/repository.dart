@@ -67,6 +67,73 @@ Future<void> maybeCommitExternalChangesOnLoad({
 }
 
 @visibleForTesting
+bool isPermissionDeniedPathAccessError(Object error) {
+  final msg = error.toString().toLowerCase();
+  return msg.contains('permission denied') || msg.contains('errno = 13');
+}
+
+@visibleForTesting
+String sanitizeRemoteUrlForDisplay(String remoteUrl) {
+  final trimmed = remoteUrl.trim();
+  if (trimmed.isEmpty) {
+    return '';
+  }
+
+  final uri = Uri.tryParse(trimmed);
+  if (uri != null &&
+      (uri.scheme == 'http' || uri.scheme == 'https') &&
+      uri.userInfo.isNotEmpty) {
+    return uri.replace(userInfo: '***').toString();
+  }
+
+  return trimmed.replaceFirst(RegExp(r'://[^/@]+@'), '://***@');
+}
+
+class SyncDiagnostics {
+  final String repoPath;
+  final bool storeInternally;
+  final String storageLocation;
+  final String branch;
+  final String remoteName;
+  final String remoteUrl;
+  final String? headHash;
+  final String? remoteTrackingHash;
+  final SyncStatus syncStatus;
+  final int pendingChanges;
+
+  SyncDiagnostics({
+    required this.repoPath,
+    required this.storeInternally,
+    required this.storageLocation,
+    required this.branch,
+    required this.remoteName,
+    required this.remoteUrl,
+    required this.headHash,
+    required this.remoteTrackingHash,
+    required this.syncStatus,
+    required this.pendingChanges,
+  });
+
+  String toMultilineText() {
+    final mode = storeInternally ? 'internal' : 'external';
+    final location = storageLocation.isEmpty ? '-' : storageLocation;
+
+    return [
+      'repoPath: $repoPath',
+      'storageMode: $mode',
+      'storageLocation: $location',
+      'branch: $branch',
+      'remoteName: $remoteName',
+      'remoteUrl: $remoteUrl',
+      'head: ${headHash ?? '-'}',
+      'remoteTracking: ${remoteTrackingHash ?? '-'}',
+      'syncStatus: $syncStatus',
+      'pendingChanges: $pendingChanges',
+    ].join('\n');
+  }
+}
+
+@visibleForTesting
 bool computeInitialFileStorageCacheReady({
   required bool fastStartupMode,
   required GitHash headHash,
@@ -76,6 +143,53 @@ bool computeInitialFileStorageCacheReady({
     return true;
   }
   return headHash == lastProcessedHead;
+}
+
+@visibleForTesting
+bool shouldFallbackToInternalStorageForUnsupportedMobileGit({
+  required bool storeInternally,
+  required Object error,
+}) {
+  if (storeInternally) {
+    return false;
+  }
+  return isUnsupportedMobileGitEngineError(error);
+}
+
+@visibleForTesting
+bool shouldContinueWithLocalOnlySyncAfterFetchFailure(Object error) {
+  return isUnsupportedMobileGitEngineError(error);
+}
+
+@visibleForTesting
+bool isLikelyRemoteAuthError(Object error) {
+  final msg = error.toString().toLowerCase();
+  return msg.contains('invalid auth method') ||
+      msg.contains('authentication required') ||
+      msg.contains('authorization failed') ||
+      msg.contains('invalid credentials') ||
+      msg.contains('unauthorized');
+}
+
+class RepoStorageRelocatedException implements Exception {
+  final String message;
+
+  const RepoStorageRelocatedException(this.message);
+
+  @override
+  String toString() => message;
+}
+
+@visibleForTesting
+bool canIgnoreSourceRepoDeleteErrorForMove(Object error) {
+  if (error is! io.FileSystemException) {
+    return false;
+  }
+
+  final msg = error.toString().toLowerCase();
+  // Some Android scoped-storage providers keep temporary entries around.
+  // If copy + destination validation succeeded, we can keep old dir and continue.
+  return msg.contains('directory not empty') || msg.contains('errno = 39');
 }
 
 class GitJournalRepo with ChangeNotifier {
@@ -188,6 +302,11 @@ class GitJournalRepo with ChangeNotifier {
     );
 
     var repoPath = await storageConfig.buildRepoPath(gitBaseDir);
+    repoPath = await _autoSwitchToInternalIfExternalRepoInaccessible(
+      repoPath: repoPath,
+      gitBaseDir: gitBaseDir,
+      storageConfig: storageConfig,
+    );
     Log.i("Loading Repo at path $repoPath");
     emitStartupTrace(
       '+${sw.elapsedMilliseconds}ms: repo path resolved',
@@ -280,6 +399,47 @@ class GitJournalRepo with ChangeNotifier {
     );
 
     return gjRepo;
+  }
+
+  static Future<String> _autoSwitchToInternalIfExternalRepoInaccessible({
+    required String repoPath,
+    required String gitBaseDir,
+    required StorageConfig storageConfig,
+  }) async {
+    if (storageConfig.storeInternally) {
+      return repoPath;
+    }
+
+    final configPath = p.join(repoPath, '.git', 'config');
+    try {
+      final configFile = io.File(configPath);
+      if (!configFile.existsSync()) {
+        return repoPath;
+      }
+      configFile.readAsStringSync();
+      return repoPath;
+    } catch (ex, st) {
+      if (!isPermissionDeniedPathAccessError(ex)) {
+        return repoPath;
+      }
+
+      final internalRepoPath = p.join(gitBaseDir, storageConfig.folderName);
+      if (!GitRepository.isValidRepo(internalRepoPath)) {
+        return repoPath;
+      }
+
+      Log.w(
+        'External repository is inaccessible. '
+        'Switching to internal repository for stability.',
+        ex: ex,
+        stacktrace: st,
+      );
+
+      storageConfig.storeInternally = true;
+      storageConfig.storageLocation = '';
+      await storageConfig.save();
+      return await storageConfig.buildRepoPath(gitBaseDir);
+    }
   }
 
   GitJournalRepo._internal({
@@ -458,9 +618,22 @@ class GitJournalRepo with ChangeNotifier {
 
     Future<void>? noteLoadingFuture;
     try {
-      await _networkLock.synchronized(() async {
-        await _gitRepo.fetch();
+      final fetchOutcome = await _networkLock.synchronized(() async {
+        return _fetchWithHttpsFallback();
       });
+
+      if (fetchOutcome == _FetchOutcome.localOnly) {
+        await _loadNotes();
+        attempt.add(
+          SyncStatus.Done,
+          Exception(
+            'Remote sync is temporarily unavailable on this device. '
+            'Local notes are up to date and usable.',
+          ),
+        );
+        notifyListeners();
+        return;
+      }
 
       attempt.add(SyncStatus.Merging);
 
@@ -481,15 +654,45 @@ class GitJournalRepo with ChangeNotifier {
 
       noteLoadingFuture = _loadNotes();
 
+      var skipPushAsUnsupported = false;
       await _networkLock.synchronized(() async {
-        await _gitRepo.push();
+        try {
+          await _gitRepo.push();
+        } catch (ex, st) {
+          // Some Android devices fail in native push with
+          // "function not implemented". Keep fetch/merge usable.
+          if (isFunctionNotImplementedGitError(ex)) {
+            Log.w('Skipping push on this device: $ex');
+            await logExceptionWarning(ex, st);
+            skipPushAsUnsupported = true;
+            return;
+          }
+          rethrow;
+        }
       });
 
       Log.d("Synced!");
-      attempt.add(SyncStatus.Done);
-      numChanges = 0;
+      if (skipPushAsUnsupported) {
+        attempt.add(
+          SyncStatus.Done,
+          Exception(
+            'Push is currently unavailable on this device. '
+            'Fetch and merge completed successfully.',
+          ),
+        );
+      } else {
+        attempt.add(SyncStatus.Done);
+        numChanges = 0;
+      }
       notifyListeners();
     } catch (e, stacktrace) {
+      if (e is RepoStorageRelocatedException) {
+        Log.w(e.message);
+        attempt.add(SyncStatus.Done, Exception(e.message));
+        notifyListeners();
+        return;
+      }
+
       Log.e("Failed to Sync", ex: e, stacktrace: stacktrace);
 
       var ex = e;
@@ -506,6 +709,145 @@ class GitJournalRepo with ChangeNotifier {
     }
 
     await noteLoadingFuture;
+  }
+
+  Future<_FetchOutcome> _fetchWithHttpsFallback() async {
+    try {
+      await _gitRepo.fetch();
+      return _FetchOutcome.fetched;
+    } catch (ex) {
+      final switchedRemote =
+          await _trySwitchRemoteToHttpsOnUnsupportedFetch(ex);
+      if (switchedRemote != null) {
+        Log.w('Retrying fetch after switching remote to HTTPS', ex: ex);
+        try {
+          await _gitRepo.fetch();
+          return _FetchOutcome.fetched;
+        } catch (retryEx) {
+          await _restoreRemoteAfterFailedHttpsFallback(switchedRemote);
+          if (await _tryMoveRepoToInternalOnUnsupportedFetch(retryEx)) {
+            throw const RepoStorageRelocatedException(
+              'The repository was moved to internal storage for sync stability '
+              'on this device. Please sync again.',
+            );
+          }
+          if (isLikelyRemoteAuthError(retryEx)) {
+            return _FetchOutcome.localOnly;
+          }
+          if (shouldContinueWithLocalOnlySyncAfterFetchFailure(retryEx)) {
+            return _FetchOutcome.localOnly;
+          }
+          rethrow;
+        }
+      }
+
+      if (await _tryMoveRepoToInternalOnUnsupportedFetch(ex)) {
+        throw const RepoStorageRelocatedException(
+          'The repository was moved to internal storage for sync stability '
+          'on this device. Please sync again.',
+        );
+      }
+      if (shouldContinueWithLocalOnlySyncAfterFetchFailure(ex)) {
+        return _FetchOutcome.localOnly;
+      }
+      rethrow;
+    }
+  }
+
+  Future<_RemoteSwitchInfo?> _trySwitchRemoteToHttpsOnUnsupportedFetch(
+    Object error,
+  ) async {
+    if (!isUnsupportedMobileGitEngineError(error)) {
+      return null;
+    }
+
+    var gitRepo = GitRepository.load(repoPath);
+    try {
+      var remotes = gitRepo.config.remotes;
+      if (remotes.isEmpty) {
+        return null;
+      }
+
+      final candidate = findConvertibleRemoteForHttps(remotes);
+      final switchIndex = candidate.$1;
+      final httpsUrl = candidate.$2;
+      if (switchIndex == null || httpsUrl == null) {
+        return null;
+      }
+
+      final current = remotes[switchIndex];
+      gitRepo.config.remotes[switchIndex] = GitRemoteConfig(
+        name: current.name,
+        url: httpsUrl,
+        fetch: current.fetch,
+      );
+      gitRepo.saveConfig();
+      Log.i("Remote '${current.name}' switched to HTTPS for mobile fallback");
+      return _RemoteSwitchInfo(
+        index: switchIndex,
+        previousRemote: current,
+      );
+    } finally {
+      gitRepo.close();
+    }
+  }
+
+  Future<void> _restoreRemoteAfterFailedHttpsFallback(
+    _RemoteSwitchInfo info,
+  ) async {
+    var gitRepo = GitRepository.load(repoPath);
+    try {
+      if (info.index < 0 || info.index >= gitRepo.config.remotes.length) {
+        return;
+      }
+
+      gitRepo.config.remotes[info.index] = info.previousRemote;
+      gitRepo.saveConfig();
+      Log.i(
+        "Restored remote '${info.previousRemote.name}' after HTTPS fallback failure",
+      );
+    } finally {
+      gitRepo.close();
+    }
+  }
+
+  Future<bool> _tryMoveRepoToInternalOnUnsupportedFetch(Object error) async {
+    if (!shouldFallbackToInternalStorageForUnsupportedMobileGit(
+      storeInternally: storageConfig.storeInternally,
+      error: error,
+    )) {
+      return false;
+    }
+
+    final moved = await _moveRepoToInternalStorageForMobileGit();
+    if (moved) {
+      Log.w('Moved repository to internal storage after unsupported git op');
+    }
+    return moved;
+  }
+
+  Future<bool> _moveRepoToInternalStorageForMobileGit() async {
+    final previousStoreInternally = storageConfig.storeInternally;
+    final previousStorageLocation = storageConfig.storageLocation;
+
+    storageConfig.storeInternally = true;
+    storageConfig.storageLocation = '';
+    await storageConfig.save();
+
+    try {
+      await moveRepoToPath();
+      return true;
+    } catch (ex, st) {
+      storageConfig.storeInternally = previousStoreInternally;
+      storageConfig.storageLocation = previousStorageLocation;
+      await storageConfig.save();
+      Log.e(
+        'Failed to move repo to internal storage as mobile git fallback',
+        ex: ex,
+        stacktrace: st,
+      );
+      return false;
+    }
   }
 
   Future<void> _syncNotes() async {
@@ -799,7 +1141,19 @@ class GitJournalRepo with ChangeNotifier {
           "Move repository failed: destination is not a valid git repo",
         );
       }
-      await io.Directory(repoPath).delete(recursive: true);
+      try {
+        await io.Directory(repoPath).delete(recursive: true);
+      } catch (ex, st) {
+        if (!canIgnoreSourceRepoDeleteErrorForMove(ex)) {
+          rethrow;
+        }
+        Log.w(
+          "Source repo cleanup failed after successful move. "
+          "Continuing with new repo location.",
+          ex: ex,
+          stacktrace: st,
+        );
+      }
 
       repoManager.buildActiveRepository();
     }
@@ -984,6 +1338,83 @@ class GitJournalRepo with ChangeNotifier {
     await Share.shareXFiles([XFile(exportPath, name: "$repoName.zip")]);
     await dir.delete(recursive: true);
   }
+
+  Future<SyncDiagnostics> collectSyncDiagnostics() async {
+    var branch = _currentBranch ?? '-';
+    String remoteName = 'origin';
+    var remoteUrl = '';
+    String? headHash;
+    String? remoteTrackingHash;
+
+    try {
+      final repo = GitRepository.load(repoPath);
+      try {
+        final remotes = repo.config.remotes;
+        final origin = repo.config.remote('origin');
+        if (origin != null) {
+          remoteName = origin.name;
+          remoteUrl = sanitizeRemoteUrlForDisplay(origin.url);
+        } else if (remotes.isNotEmpty) {
+          final first = remotes.first;
+          remoteName = first.name;
+          remoteUrl = sanitizeRemoteUrlForDisplay(first.url);
+        }
+      } finally {
+        repo.close();
+      }
+    } catch (ex, st) {
+      Log.e("collectSyncDiagnostics.loadRepoConfig", ex: ex, stacktrace: st);
+    }
+
+    try {
+      final repo = await GitAsyncRepository.load(repoPath);
+      branch = await repo.currentBranch();
+      headHash = (await repo.headHash()).toString();
+
+      if (remoteName.isNotEmpty && branch.isNotEmpty && branch != '-') {
+        try {
+          final remoteBranch = await repo.remoteBranch(remoteName, branch);
+          remoteTrackingHash = remoteBranch.hash.toString();
+        } catch (ex, st) {
+          Log.e(
+            "collectSyncDiagnostics.remoteBranch",
+            ex: ex,
+            stacktrace: st,
+          );
+        }
+      }
+    } catch (ex, st) {
+      Log.e("collectSyncDiagnostics.readRefs", ex: ex, stacktrace: st);
+    }
+
+    return SyncDiagnostics(
+      repoPath: repoPath,
+      storeInternally: storageConfig.storeInternally,
+      storageLocation: storageConfig.storageLocation,
+      branch: branch,
+      remoteName: remoteName,
+      remoteUrl: remoteUrl.isEmpty ? '-' : remoteUrl,
+      headHash: headHash,
+      remoteTrackingHash: remoteTrackingHash,
+      syncStatus: syncStatus,
+      pendingChanges: numChanges,
+    );
+  }
+}
+
+enum _FetchOutcome {
+  fetched,
+  localOnly,
+}
+
+class _RemoteSwitchInfo {
+  final int index;
+  final GitRemoteConfig previousRemote;
+
+  const _RemoteSwitchInfo({
+    required this.index,
+    required this.previousRemote,
+  });
 }
 
 Future<void> _copyDirectory(String source, String destination) async {

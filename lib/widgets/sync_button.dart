@@ -103,6 +103,9 @@ class _SyncButtonState extends State<SyncButton> {
       final repo = context.read<GitJournalRepo>();
       await repo.syncNotes();
     } catch (e) {
+      if (await trySwitchRemoteToHttpsAndResync(context, e)) {
+        return;
+      }
       showErrorSnackbar(context, e);
     }
   }

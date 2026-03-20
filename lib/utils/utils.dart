@@ -6,7 +6,10 @@
 
 import 'package:flutter/foundation.dart' as foundation;
 import 'package:flutter/material.dart';
+import 'package:dart_git/config.dart';
+import 'package:dart_git/git.dart';
 import 'package:gitjournal/core/folder/notes_folder_fs.dart';
+import 'package:gitjournal/core/git_repo.dart';
 import 'package:gitjournal/core/note_storage.dart';
 import 'package:gitjournal/core/notes/note.dart';
 import 'package:gitjournal/l10n.dart';
@@ -71,6 +74,63 @@ void showErrorSnackbar(BuildContext context, Object error) {
   );
   var message = error.toString();
   showErrorMessageSnackbar(context, message);
+}
+
+Future<bool> trySwitchRemoteToHttpsAndResync(
+  BuildContext context,
+  Object error,
+) async {
+  if (!isUnsupportedMobileGitEngineError(error)) {
+    return false;
+  }
+
+  final repo = context.read<GitJournalRepo>();
+  final remotes = await repo.remoteConfigs();
+  if (remotes.isEmpty) {
+    return false;
+  }
+
+  final candidate = pickConvertibleRemote(remotes);
+  final switchIndex = candidate.$1;
+  final httpsUrl = candidate.$2;
+
+  if (switchIndex == null || httpsUrl == null) {
+    return false;
+  }
+
+  final gitRepo = GitRepository.load(repo.repoPath);
+  try {
+    final current = remotes[switchIndex];
+    gitRepo.config.remotes[switchIndex] = GitRemoteConfig(
+      name: current.name,
+      url: httpsUrl,
+      fetch: current.fetch,
+    );
+    gitRepo.saveConfig();
+  } finally {
+    gitRepo.close();
+  }
+
+  if (!context.mounted) {
+    return true;
+  }
+
+  showSnackbar(context, "Remote switched to HTTPS. Retrying sync...");
+
+  try {
+    await repo.syncNotes();
+  } catch (syncError) {
+    if (!context.mounted) {
+      return true;
+    }
+    showErrorSnackbar(context, syncError);
+  }
+
+  return true;
+}
+
+(int?, String?) pickConvertibleRemote(List<GitRemoteConfig?> remotes) {
+  return findConvertibleRemoteForHttps(remotes);
 }
 
 NotesFolderFS getFolderForEditor(

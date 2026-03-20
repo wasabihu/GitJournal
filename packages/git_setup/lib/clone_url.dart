@@ -204,11 +204,15 @@ String? isCloneUrlValid(BuildContext context, String? url) {
     return context.loc.setupCloneUrlValidatorInvalid;
   }
 
-  if (result.protocol != 'ssh') {
-    return context.loc.setupCloneUrlValidatorOnlySsh;
+  if (!isSupportedCloneUrlProtocol(result.protocol)) {
+    return context.loc.setupCloneUrlValidatorInvalid;
   }
 
   return null;
+}
+
+bool isSupportedCloneUrlProtocol(String protocol) {
+  return protocol == 'ssh' || protocol == 'http' || protocol == 'https';
 }
 
 String _cleanupGitUrl(String url) {

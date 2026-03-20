@@ -5,6 +5,7 @@
  */
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:gitjournal/analytics/analytics.dart';
 import 'package:gitjournal/app_router.dart';
 import 'package:gitjournal/core/folder/filtered_notes_folder.dart';
@@ -38,6 +39,7 @@ import 'package:provider/provider.dart';
 enum DropDownChoices {
   SortingOptions,
   ViewOptions,
+  SyncDiagnostics,
 }
 
 enum NoteSelectedExtraActions {
@@ -434,6 +436,10 @@ class _FolderViewState extends State<FolderView> {
           case DropDownChoices.ViewOptions:
             _configureViewButtonPressed();
             break;
+
+          case DropDownChoices.SyncDiagnostics:
+            _showSyncDiagnostics();
+            break;
         }
       },
       itemBuilder: (BuildContext context) => <PopupMenuEntry<DropDownChoices>>[
@@ -448,6 +454,10 @@ class _FolderViewState extends State<FolderView> {
             value: DropDownChoices.ViewOptions,
             child: Text(context.loc.widgetsFolderViewViewOptions),
           ),
+        PopupMenuItem<DropDownChoices>(
+          value: DropDownChoices.SyncDiagnostics,
+          child: Text(context.loc.settingsDebugTitle),
+        ),
       ],
     );
 
@@ -551,6 +561,40 @@ class _FolderViewState extends State<FolderView> {
       _selectedNotes = [];
     });
   }
+
+  Future<void> _showSyncDiagnostics() async {
+    final repo = context.read<GitJournalRepo>();
+    final diagnostics = await repo.collectSyncDiagnostics();
+    final details = diagnostics.toMultilineText();
+
+    if (!mounted) {
+      return;
+    }
+
+    await showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(context.loc.settingsDebugTitle),
+        content: SingleChildScrollView(
+          child: SelectableText(details),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: details));
+              Navigator.of(dialogContext).pop();
+              showSnackbar(context, context.loc.setupSshKeyCopied);
+            },
+            child: Text(context.loc.setupSshKeyCopy),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: Text(context.loc.settingsOk),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _SliverHeader extends StatelessWidget {
@@ -575,6 +619,9 @@ Future<void> syncRepo(BuildContext context) async {
     var container = context.read<GitJournalRepo>();
     await container.syncNotes();
   } catch (e) {
+    if (await trySwitchRemoteToHttpsAndResync(context, e)) {
+      return;
+    }
     showErrorSnackbar(context, e);
   }
 }

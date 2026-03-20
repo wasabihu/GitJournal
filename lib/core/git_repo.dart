@@ -7,6 +7,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:dart_git/config.dart';
 import 'package:dart_git/dart_git.dart';
 import 'package:dart_git/exceptions.dart';
 import 'package:gitjournal/core/commit_message_builder.dart';
@@ -152,6 +153,7 @@ class GitNoteRepository {
 
   Future<void> fetch() async {
     var remoteName = 'origin';
+    final sshRemote = _usesSshRemote(remoteName);
 
     if (Platform.isAndroid || Platform.isIOS) {
       try {
@@ -163,6 +165,7 @@ class GitNoteRepository {
           operation: 'Git fetch',
           error: ex,
           usesEd25519Key: usesEd25519Key(config),
+          usesSshRemote: sshRemote,
         );
         Log.e("GitFetch Failed", ex: ex, stacktrace: st);
         throw mapped;
@@ -215,14 +218,16 @@ class GitNoteRepository {
     // Only push if we have something we need to push
     try {
       var repo = await GitAsyncRepository.load(gitRepoPath);
-      var canPush = await repo.canPush();
-
-      if (!canPush) {}
+      var aheadBy = await repo.numChangesToPush();
+      if (shouldSkipPushWhenNoOutgoingChanges(aheadBy)) {
+        return;
+      }
     } catch (ex, st) {
       Log.e("Can Push", ex: ex, stacktrace: st);
     }
 
     var remoteName = 'origin';
+    final sshRemote = _usesSshRemote(remoteName);
     if (Platform.isAndroid || Platform.isIOS) {
       try {
         var bindings = GitBindingsAsync();
@@ -243,6 +248,7 @@ class GitNoteRepository {
           operation: 'Git push',
           error: ex,
           usesEd25519Key: usesEd25519Key(config),
+          usesSshRemote: sshRemote,
         );
       }
     } else if (Platform.isMacOS || Platform.isLinux) {
@@ -264,6 +270,99 @@ class GitNoteRepository {
       return null;
     }
   }
+
+  bool _usesSshRemote(String remoteName) {
+    try {
+      var repo = GitRepository.load(gitRepoPath);
+      try {
+        final url = repo.config.remote(remoteName)?.url ?? '';
+        return isLikelySshRemoteUrl(url);
+      } finally {
+        repo.close();
+      }
+    } catch (ex, st) {
+      Log.e(
+        "Failed to inspect remote protocol for '$remoteName'",
+        ex: ex,
+        stacktrace: st,
+      );
+      return true;
+    }
+  }
+}
+
+bool shouldSkipPushWhenNoOutgoingChanges(int aheadBy) => aheadBy <= 0;
+
+bool isFunctionNotImplementedGitError(Object error) {
+  return error.toString().toLowerCase().contains('function not implemented');
+}
+
+bool isUnsupportedMobileGitEngineError(Object error) {
+  final message = error.toString().toLowerCase();
+  return message.contains('unsupported operation on this device') ||
+      message.contains('function not implemented') ||
+      message.contains('does not support ed25519 ssh keys');
+}
+
+String? tryConvertSshRemoteToHttps(String remoteUrl) {
+  final trimmed = remoteUrl.trim();
+  if (trimmed.isEmpty) {
+    return null;
+  }
+
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    return null;
+  }
+
+  if (trimmed.startsWith('ssh://')) {
+    final uri = Uri.tryParse(trimmed);
+    if (uri == null || uri.scheme != 'ssh' || uri.host.isEmpty) {
+      return null;
+    }
+
+    final rawPath = uri.path.replaceFirst(RegExp(r'^/+'), '');
+    if (rawPath.isEmpty) {
+      return null;
+    }
+
+    return 'https://${uri.host}/$rawPath';
+  }
+
+  final scpLike = RegExp(r'^[^@]+@([^:/]+)[:/](.+)$');
+  final match = scpLike.firstMatch(trimmed);
+  if (match == null) {
+    return null;
+  }
+
+  final host = match.group(1)!;
+  final path = match.group(2)!.replaceFirst(RegExp(r'^/+'), '');
+  if (path.isEmpty) {
+    return null;
+  }
+
+  return 'https://$host/$path';
+}
+
+(int?, String?) findConvertibleRemoteForHttps(List<GitRemoteConfig?> remotes) {
+  final originIndex = remotes.indexWhere((r) => r?.name == 'origin');
+  final candidateIndexes = <int>[
+    if (originIndex != -1) originIndex,
+    ...List<int>.generate(remotes.length, (i) => i)
+        .where((i) => i != originIndex),
+  ];
+
+  for (final idx in candidateIndexes) {
+    final remote = remotes[idx];
+    if (remote == null) {
+      continue;
+    }
+
+    final converted = tryConvertSshRemoteToHttps(remote.url);
+    if (converted != null) {
+      return (idx, converted);
+    }
+  }
+  return (null, null);
 }
 
 const ignoredMessages = [
@@ -295,6 +394,22 @@ bool shouldLogGitException(Exception ex) {
   return true;
 }
 
+bool isLikelySshRemoteUrl(String remoteUrl) {
+  final trimmed = remoteUrl.trim();
+  if (trimmed.isEmpty) {
+    return false;
+  }
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    return false;
+  }
+  if (trimmed.startsWith('ssh://')) {
+    return true;
+  }
+
+  final scpLike = RegExp(r'^[^@]+@[^:/]+[:/].+$');
+  return scpLike.hasMatch(trimmed);
+}
+
 bool usesEd25519Key(GitConfig config) {
   if (config.sshPublicKey.trim().startsWith('ssh-ed25519 ')) {
     return true;
@@ -306,14 +421,24 @@ Exception mapMobileGitException({
   required String operation,
   required Object error,
   required bool usesEd25519Key,
+  required bool usesSshRemote,
 }) {
   final message = error.toString().toLowerCase();
-  if (message.contains('function not implemented') && usesEd25519Key) {
+  if (message.contains('function not implemented') &&
+      usesEd25519Key &&
+      usesSshRemote) {
     return Exception(
       '$operation failed because the current mobile Git engine does not '
       'support Ed25519 SSH keys on some devices. Switch this repository to '
       'an RSA SSH key, update the remote service with the new public key, '
-      'and try syncing again.',
+      'or switch this repository to HTTPS remote access, and try syncing again.',
+    );
+  }
+  if (message.contains('function not implemented')) {
+    return Exception(
+      '$operation failed because the current mobile Git engine hit an '
+      'unsupported operation on this device. Please sync from another device '
+      'for now, or switch this repository to HTTPS remote access.',
     );
   }
 

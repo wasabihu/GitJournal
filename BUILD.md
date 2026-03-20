@@ -1,30 +1,33 @@
-# Building Instructions
+# 构建说明
 
-- It's best to just work on this on Android - the ios setup is far more complicated and I haven't managed to automate it.
+当前主文档为中文版本，英文版请查看 [BUILD.en.md](./BUILD.en.md)。
 
-## Environment Setup
+- 建议优先在 Android 上进行本地开发。当前 iOS 的环境配置更复杂，仓库现有流程也主要围绕 Android。
 
-1. Install [Flutter](https://flutter.dev/docs/get-started/install) v1 through official guidelines. The last v1.22.6 will do.
-1. As a part of flutter installation, you will need to install [Android Studio](https://developer.android.com/studio)
-1. Use [AVD manager](https://developer.android.com/studio/run/managing-avds) from Android Studio, to create device for local development.
-1. Run command `flutter run --flavor dev --debug`: it will connect to available device and run program.
+## 环境准备
 
-   1. Or you can run `flutter build apk --flavor dev --debug` and see apk under `build/app/outputs/flutter-apk/`
+1. 按照官方指南安装 [Flutter](https://flutter.dev/docs/get-started/install)。
+1. 安装 Flutter 时，也需要一并安装 [Android Studio](https://developer.android.com/studio)。
+1. 使用 Android Studio 的 [AVD Manager](https://developer.android.com/studio/run/managing-avds) 创建一个本地开发用模拟器。
+1. 执行 `flutter run --flavor dev --debug`，它会连接可用设备并启动应用。
 
-1. For production APKs:
+   1. 也可以执行 `flutter build apk --flavor dev --debug`，生成的 APK 位于 `build/app/outputs/flutter-apk/`。
 
-   1. Universal release APK: `flutter build apk --flavor prod --release`
-   1. Smaller per-device release APKs: `flutter build apk --flavor prod --release --split-per-abi`
-   1. The generated split APKs are written to `build/app/outputs/flutter-apk/` as `app-arm64-v8a-prod-release.apk`, `app-armeabi-v7a-prod-release.apk`, and `app-x86_64-prod-release.apk`
+1. 生产环境 APK 构建方式：
 
-1. You will see application on emulator, you are all setup. You can start with [app.dart](lib/app.dart) file to exploring code.
+   1. 通用 release APK：`flutter build apk --flavor prod --release`
+   1. 按设备架构拆分的更小 APK：`flutter build apk --flavor prod --release --split-per-abi`
+   1. 拆分后的 APK 会输出到 `build/app/outputs/flutter-apk/`，文件名通常为 `app-arm64-v8a-prod-release.apk`、`app-armeabi-v7a-prod-release.apk` 和 `app-x86_64-prod-release.apk`
 
-## Trouble Shooting
+1. 模拟器中看到应用后，就说明环境已经准备完成。可以从 [lib/app.dart](./lib/app.dart) 开始了解项目结构。
 
-## IDE Setup
+## 故障排查
 
-VS Code has great plugin for flutter, but you need to add args to launch.json.
-Example launch.json:
+当前文档还没有单独整理常见问题，若后续需要可以继续补充到这里。
+
+## IDE 配置
+
+VS Code 对 Flutter 的支持很好，不过需要在 `launch.json` 中补充启动参数。示例：
 
 ```json
 {
@@ -40,11 +43,11 @@ Example launch.json:
 }
 ```
 
-### Debugging with breakpoints
+### 使用断点调试
 
-To use Android Studio's debugger with breakpoints:
+如果想使用 Android Studio 的断点调试：
 
-- Open your local repo with Android Studio.
-- Android Studio should already have a Flutter Run Configuration named "main.dart", visible at the top of the window.
-- Edit this run configuration. For "Build flavor", type "dev" and save the configuration.
-- On the top bar of Android Studio, with "main.dart" selected, click the debug button (it has hover text "Debug main.dart").
+- 在 Android Studio 中打开本地仓库。
+- 顶部通常已经会有一个名为 `main.dart` 的 Flutter Run Configuration。
+- 编辑这个运行配置，在 `Build flavor` 中填写 `dev`，然后保存。
+- 返回顶部工具栏，选中 `main.dart` 后点击调试按钮，按钮提示一般是 `Debug main.dart`。
