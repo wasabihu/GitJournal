@@ -296,8 +296,20 @@ class NotesFolderFS with NotesFolderNotifier implements NotesFolder {
         file = await fileStorage.load(filePath);
       } catch (ex, st) {
         Log.e("NotesFolderFS FileStorage Failure", ex: ex, stacktrace: st);
-        if (ex is FileStorageCacheIncomplete) return;
-        continue;
+        if (ex is! FileStorageCacheIncomplete) {
+          continue;
+        }
+
+        try {
+          file = await fileStorage.loadLoose(filePath);
+        } catch (fallbackEx, fallbackSt) {
+          Log.e(
+            "NotesFolderFS Loose FileStorage Failure",
+            ex: fallbackEx,
+            stacktrace: fallbackSt,
+          );
+          continue;
+        }
       }
 
       var fileName = p.basename(filePath);

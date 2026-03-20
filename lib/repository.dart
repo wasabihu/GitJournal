@@ -43,10 +43,10 @@ import 'package:time/time.dart';
 import 'package:universal_io/io.dart' as io;
 import 'package:universal_io/io.dart' show Platform;
 
-@visibleForTesting
-Future<void> maybeCommitExternalChangesOnLoad({
+Future<void> _maybeCommitExternalChangesWithTimeout({
   required bool storeInternally,
   required Future<void> Function() commitFn,
+  required String phase,
   Duration timeout = const Duration(seconds: 2),
 }) async {
   if (storeInternally) {
@@ -56,14 +56,42 @@ Future<void> maybeCommitExternalChangesOnLoad({
   try {
     await commitFn().timeout(timeout);
   } on TimeoutException catch (_) {
-    Log.w("commitUnTrackedChanges on load timed out; skipping");
+    Log.w("commitUnTrackedChanges $phase timed out; skipping");
   } catch (ex, st) {
     Log.e(
-      "commitUnTrackedChanges on load failed, skipping",
+      "commitUnTrackedChanges $phase failed, skipping",
       ex: ex,
       stacktrace: st,
     );
   }
+}
+
+@visibleForTesting
+Future<void> maybeCommitExternalChangesOnLoad({
+  required bool storeInternally,
+  required Future<void> Function() commitFn,
+  Duration timeout = const Duration(seconds: 2),
+}) {
+  return _maybeCommitExternalChangesWithTimeout(
+    storeInternally: storeInternally,
+    commitFn: commitFn,
+    phase: 'on load',
+    timeout: timeout,
+  );
+}
+
+@visibleForTesting
+Future<void> maybeCommitExternalChangesBeforeSync({
+  required bool storeInternally,
+  required Future<void> Function() commitFn,
+  Duration timeout = const Duration(seconds: 3),
+}) {
+  return _maybeCommitExternalChangesWithTimeout(
+    storeInternally: storeInternally,
+    commitFn: commitFn,
+    phase: 'before sync',
+    timeout: timeout,
+  );
 }
 
 @visibleForTesting
@@ -150,15 +178,20 @@ bool shouldFallbackToInternalStorageForUnsupportedMobileGit({
   required bool storeInternally,
   required Object error,
 }) {
-  if (storeInternally) {
-    return false;
-  }
-  return isUnsupportedMobileGitEngineError(error);
+  // Keep storage location stable. Unsupported mobile git operations should
+  // degrade to local-only sync instead of silently relocating repositories.
+  return false;
 }
 
 @visibleForTesting
 bool shouldContinueWithLocalOnlySyncAfterFetchFailure(Object error) {
   return isUnsupportedMobileGitEngineError(error);
+}
+
+@visibleForTesting
+bool shouldContinueWithLocalOnlyAfterPushFailure(Object error) {
+  return isUnsupportedMobileGitEngineError(error) ||
+      isFunctionNotImplementedGitError(error);
 }
 
 @visibleForTesting
@@ -597,7 +630,10 @@ class GitJournalRepo with ChangeNotifier {
     if (_shouldCheckForChanges()) {
       try {
         var repo = await GitAsyncRepository.load(repoPath);
-        await _commitUnTrackedChanges(repo, gitConfig);
+        await maybeCommitExternalChangesBeforeSync(
+          storeInternally: storageConfig.storeInternally,
+          commitFn: () => _commitUnTrackedChanges(repo, gitConfig),
+        );
       } catch (ex, st) {
         Log.e("SyncNotes Failed to Load Repo", ex: ex, stacktrace: st);
         return;
@@ -660,8 +696,8 @@ class GitJournalRepo with ChangeNotifier {
           await _gitRepo.push();
         } catch (ex, st) {
           // Some Android devices fail in native push with
-          // "function not implemented". Keep fetch/merge usable.
-          if (isFunctionNotImplementedGitError(ex)) {
+          // unsupported native git operations. Keep local notes usable.
+          if (shouldContinueWithLocalOnlyAfterPushFailure(ex)) {
             Log.w('Skipping push on this device: $ex');
             await logExceptionWarning(ex, st);
             skipPushAsUnsupported = true;
@@ -816,6 +852,13 @@ class GitJournalRepo with ChangeNotifier {
       storeInternally: storageConfig.storeInternally,
       error: error,
     )) {
+      if (!storageConfig.storeInternally &&
+          isUnsupportedMobileGitEngineError(error)) {
+        Log.w(
+          'Skipping automatic repository relocation for unsupported '
+          'mobile git operation. Keeping configured storage location.',
+        );
+      }
       return false;
     }
 

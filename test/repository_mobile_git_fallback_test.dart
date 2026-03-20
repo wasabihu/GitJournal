@@ -3,8 +3,9 @@ import 'package:gitjournal/repository.dart';
 
 void main() {
   group('shouldFallbackToInternalStorageForUnsupportedMobileGit', () {
-    test('returns true for unsupported mobile git error on external storage',
-        () {
+    test(
+        'returns false for unsupported mobile git error on external storage '
+        '(storage path remains stable)', () {
       final shouldFallback =
           shouldFallbackToInternalStorageForUnsupportedMobileGit(
         storeInternally: false,
@@ -12,7 +13,7 @@ void main() {
             'GitFetch failed with error code: function not implemented'),
       );
 
-      expect(shouldFallback, isTrue);
+      expect(shouldFallback, isFalse);
     });
 
     test('returns false when repository is already internal', () {
@@ -82,6 +83,34 @@ void main() {
       final authError = isLikelyRemoteAuthError(Exception('network timeout'));
 
       expect(authError, isFalse);
+    });
+  });
+
+  group('shouldContinueWithLocalOnlyAfterPushFailure', () {
+    test('returns true for raw function-not-implemented push errors', () {
+      final shouldContinue = shouldContinueWithLocalOnlyAfterPushFailure(
+        Exception('GitPush failed with error code: function not implemented'),
+      );
+
+      expect(shouldContinue, isTrue);
+    });
+
+    test('returns true for mapped unsupported push errors', () {
+      final shouldContinue = shouldContinueWithLocalOnlyAfterPushFailure(
+        Exception(
+          'Git push failed because the current mobile Git engine hit an unsupported operation on this device.',
+        ),
+      );
+
+      expect(shouldContinue, isTrue);
+    });
+
+    test('returns false for unrelated push errors', () {
+      final shouldContinue = shouldContinueWithLocalOnlyAfterPushFailure(
+        Exception('authentication failed'),
+      );
+
+      expect(shouldContinue, isFalse);
     });
   });
 }

@@ -41,4 +41,16 @@ void main() {
 
     expect(completer.isCompleted, isFalse);
   });
+
+  test('sync timeout does not throw for external repository', () async {
+    final completer = Completer<void>();
+
+    await maybeCommitExternalChangesBeforeSync(
+      storeInternally: false,
+      timeout: const Duration(milliseconds: 20),
+      commitFn: () => completer.future,
+    );
+
+    expect(completer.isCompleted, isFalse);
+  });
 }

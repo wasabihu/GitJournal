@@ -83,6 +83,32 @@ class FileStorage with ChangeNotifier {
     );
   }
 
+  Future<File> loadLoose(String filePath) async {
+    assert(!filePath.startsWith(p.separator));
+    final fullFilePath = p.join(repoPath, filePath);
+
+    final ioFile = io.File(fullFilePath);
+    final stat = ioFile.statSync();
+    if (stat.type == io.FileSystemEntityType.notFound) {
+      throw Exception("File note found - $fullFilePath");
+    }
+
+    if (stat.type != io.FileSystemEntityType.file) {
+      throw Exception('File is not file. Is ${stat.type}');
+    }
+
+    final bytes = await ioFile.readAsBytes();
+    final modified = stat.modified;
+    return File(
+      oid: GitHash.compute(bytes),
+      filePath: filePath,
+      repoPath: repoPath,
+      fileLastModified: modified,
+      created: modified,
+      modified: modified,
+    );
+  }
+
   Future<void> fill() async {
     var rp = ReceivePort();
     rp.listen((d) {
